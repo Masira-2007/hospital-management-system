@@ -1,0 +1,212 @@
+generator client {
+  provider     = "prisma-client"
+  output       = "../src/generated/prisma"
+  moduleFormat = "cjs"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum AccountStatus {
+  INVITED
+  ACTIVE
+  SUSPENDED
+  DISABLED
+}
+
+enum MembershipRole {
+  PLATFORM_ADMIN
+  ORGANIZATION_OWNER
+  HOSPITAL_ADMIN
+  HOSPITAL_MANAGER
+  MEDICAL_DIRECTOR
+  DOCTOR
+  SPECIALIST_DOCTOR
+  NURSE
+  RECEPTIONIST
+  PATIENT
+  PHARMACIST
+  PHARMACY_MANAGER
+  LAB_TECHNICIAN
+  LAB_MANAGER
+  RADIOLOGIST
+  BILLING_EXECUTIVE
+  ACCOUNTANT
+  CLAIMS_EXECUTIVE
+  HR_MANAGER
+  HOSPITAL_STAFF
+  WARD_MANAGER
+  OT_MANAGER
+  INVENTORY_MANAGER
+  AMBULANCE_OPERATOR
+  SECURITY_AUDITOR
+  REFERRING_DOCTOR
+}
+
+enum AppointmentStatus {
+  REQUESTED
+  CONFIRMED
+  CHECKED_IN
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+  NO_SHOW
+}
+
+model Organization {
+  id          String       @id @default(cuid())
+  name        String
+  slug        String       @unique
+  timezone    String       @default("Asia/Kolkata")
+  currency    String       @default("INR")
+  locale      String       @default("en-IN")
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  hospitals   Hospital[]
+  memberships Membership[]
+  patients    Patient[]
+  appointments Appointment[]
+  auditEvents AuditEvent[]
+}
+
+model Hospital {
+  id             String        @id @default(cuid())
+  organizationId String
+  name           String
+  slug           String
+  timezone       String        @default("Asia/Kolkata")
+  currency       String        @default("INR")
+  createdAt      DateTime      @default(now())
+  organization   Organization  @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  branches       Branch[]
+  memberships    Membership[]
+  patients       Patient[]
+  appointments   Appointment[]
+
+  @@unique([organizationId, slug])
+  @@unique([id, organizationId])
+  @@index([organizationId])
+}
+
+model Branch {
+  id         String        @id @default(cuid())
+  hospitalId String
+  name       String
+  code       String
+  timezone   String        @default("Asia/Kolkata")
+  createdAt  DateTime      @default(now())
+  hospital   Hospital     @relation(fields: [hospitalId], references: [id], onDelete: Restrict)
+  memberships Membership[]
+  patients    Patient[]
+  appointments Appointment[]
+
+  @@unique([hospitalId, code])
+  @@index([hospitalId])
+}
+
+model User {
+  id              String       @id @default(cuid())
+  email           String       @unique
+  phone           String?
+  passwordHash    String
+  displayName     String
+  status          AccountStatus @default(INVITED)
+  emailVerifiedAt DateTime?
+  phoneVerifiedAt DateTime?
+  mfaEnabled      Boolean      @default(false)
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+  memberships     Membership[]
+  auditEvents     AuditEvent[]
+
+  @@index([status])
+}
+
+model Membership {
+  id             String         @id @default(cuid())
+  userId         String
+  organizationId String
+  hospitalId     String?
+  branchId       String?
+  role           MembershipRole
+  status         AccountStatus  @default(INVITED)
+  department     String?
+  expiresAt      DateTime?
+  createdAt      DateTime       @default(now())
+  user           User           @relation(fields: [userId], references: [id], onDelete: Restrict)
+  organization   Organization  @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  hospital       Hospital?      @relation(fields: [hospitalId, organizationId], references: [id, organizationId], onDelete: Restrict)
+  branch         Branch?        @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  appointments   Appointment[]  @relation("AppointmentDoctor")
+
+  @@unique([userId, organizationId, hospitalId, branchId, role])
+  @@unique([id, organizationId])
+  @@index([organizationId, hospitalId, branchId, status])
+  @@index([userId, status])
+}
+
+model Patient {
+  id             String        @id @default(cuid())
+  organizationId String
+  hospitalId     String
+  branchId       String?
+  mrn            String
+  firstName      String
+  lastName       String
+  dateOfBirth    DateTime?
+  phone          String?
+  email          String?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  hospital       Hospital     @relation(fields: [hospitalId, organizationId], references: [id, organizationId], onDelete: Restrict)
+  branch         Branch?      @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  appointments   Appointment[]
+
+  @@unique([organizationId, mrn])
+  @@unique([id, organizationId])
+  @@index([organizationId, hospitalId, lastName, firstName])
+  @@index([organizationId, phone])
+}
+
+model Appointment {
+  id                    String            @id @default(cuid())
+  organizationId        String
+  hospitalId            String
+  branchId              String?
+  patientId             String
+  doctorMembershipId    String
+  startsAt              DateTime
+  durationMinutes       Int               @default(20)
+  status                AppointmentStatus @default(REQUESTED)
+  reason                String?
+  createdAt             DateTime          @default(now())
+  updatedAt             DateTime          @updatedAt
+  organization          Organization     @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  hospital              Hospital         @relation(fields: [hospitalId, organizationId], references: [id, organizationId], onDelete: Restrict)
+  branch                Branch?          @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  patient               Patient          @relation(fields: [patientId, organizationId], references: [id, organizationId], onDelete: Restrict)
+  doctor                Membership       @relation("AppointmentDoctor", fields: [doctorMembershipId, organizationId], references: [id, organizationId], onDelete: Restrict)
+
+  @@index([organizationId, hospitalId, startsAt, status])
+  @@index([organizationId, patientId, startsAt])
+  @@index([organizationId, doctorMembershipId, startsAt])
+}
+
+model AuditEvent {
+  id             String       @id @default(cuid())
+  organizationId String?
+  actorUserId    String?
+  action         String
+  resourceType   String
+  resourceId     String?
+  reason         String?
+  metadata       Json?
+  createdAt      DateTime     @default(now())
+  organization   Organization? @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  actor          User?        @relation(fields: [actorUserId], references: [id], onDelete: Restrict)
+
+  @@index([organizationId, createdAt])
+  @@index([actorUserId, createdAt])
+}
