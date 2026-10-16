@@ -16,7 +16,7 @@ import {
 } from "@nestjs/common";
 import { ApiCookieAuth, ApiOperation, ApiTags } from "@nestjs/swagger";
 import type { Prisma } from "../generated/prisma/client.js";
-import { PrismaService } from "../database/prisma.service.js";
+import { PrismaService } from "../database/prisma.service.mjs";
 import {
   createSessionToken,
   hashPassword,
@@ -25,13 +25,13 @@ import {
   performDummyPasswordCheck,
   verifyPassword,
   verifyTotp,
-} from "../security/security.crypto.js";
-import { LoginDto } from "./login.dto.js";
-import { ChangePasswordDto } from "./change-password.dto.js";
-import { PasswordResetDto, PasswordResetRequestDto } from "./password-reset.dto.js";
-import { EmailDeliveryService } from "./email-delivery.service.js";
-import { getHeader, type RequestLike, type ResponseLike } from "./auth.types.js";
-import { SessionAuthGuard, sessionCookieName } from "./session-auth.guard.js";
+} from "../security/security.crypto.mjs";
+import { LoginDto } from "./login.dto.mjs";
+import { ChangePasswordDto } from "./change-password.dto.mjs";
+import { PasswordResetDto, PasswordResetRequestDto } from "./password-reset.dto.mjs";
+import { EmailDeliveryService } from "./email-delivery.service.mjs";
+import { getHeader, type RequestLike, type ResponseLike } from "./auth.types.mjs";
+import { SessionAuthGuard, sessionCookieName } from "./session-auth.guard.mjs";
 
 const SESSION_DURATION_MS = 12 * 60 * 60 * 1000;
 const REMEMBERED_SESSION_DURATION_MS = 30 * 24 * 60 * 60 * 1000;

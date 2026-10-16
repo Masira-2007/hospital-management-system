@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import { ExecutionContext, ForbiddenException } from "@nestjs/common";
 import { test } from "node:test";
-import { RequestLike } from "../src/auth/auth.types.js";
-import { TenantMembershipGuard } from "../src/auth/tenant-membership.guard.js";
-import { PrismaService } from "../src/database/prisma.service.js";
+import { RequestLike } from "../src/auth/auth.types.mjs";
+import { TenantMembershipGuard } from "../src/auth/tenant-membership.guard.mjs";
+import { PrismaService } from "../src/database/prisma.service.mjs";
 
 function contextFor(request: RequestLike): ExecutionContext {
   return {

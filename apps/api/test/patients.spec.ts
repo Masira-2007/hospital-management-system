@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import { ForbiddenException } from "@nestjs/common";
 import { test } from "node:test";
-import { RequestLike } from "../src/auth/auth.types.js";
-import { PrismaService } from "../src/database/prisma.service.js";
-import { PatientsController } from "../src/patients/patients.controller.js";
+import { RequestLike } from "../src/auth/auth.types.mjs";
+import { PrismaService } from "../src/database/prisma.service.mjs";
+import { PatientsController } from "../src/patients/patients.controller.mjs";
 
 test("patient directory applies organization, hospital and branch filters and returns a limited field set", async () => {
   let listQuery: Record<string, unknown> | undefined;

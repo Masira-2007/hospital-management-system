@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { createCipheriv, createHmac, randomBytes } from "node:crypto";
 import { test } from "node:test";
 import { ExecutionContext, ForbiddenException } from "@nestjs/common";
-import { SameSiteCsrfGuard } from "../src/auth/same-site-csrf.guard.js";
+import { SameSiteCsrfGuard } from "../src/auth/same-site-csrf.guard.mjs";
 import {
   createSessionToken,
   hashPassword,
@@ -10,7 +10,7 @@ import {
   hashSessionToken,
   verifyPassword,
   verifyTotp,
-} from "../src/security/security.crypto.js";
+} from "../src/security/security.crypto.mjs";
 
 test("passwords are stored as salted scrypt hashes and are verified without plaintext storage", async () => {
   const first = await hashPassword("correct horse battery 927!");

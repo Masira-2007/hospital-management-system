@@ -1,6 +1,6 @@
 import { Controller, Get, ServiceUnavailableException } from "@nestjs/common";
 import { ApiOperation, ApiTags } from "@nestjs/swagger";
-import { PrismaService } from "./database/prisma.service.js";
+import { PrismaService } from "./database/prisma.service.mjs";
 
 @ApiTags("platform")
 @Controller("health")

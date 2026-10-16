@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { ServiceUnavailableException, UnauthorizedException } from "@nestjs/common";
 import { test } from "node:test";
-import { AuthController } from "../src/auth/auth.controller.js";
-import { hashPassword } from "../src/security/security.crypto.js";
+import { AuthController } from "../src/auth/auth.controller.mjs";
+import { hashPassword } from "../src/security/security.crypto.mjs";
 
 const request = { headers: { "user-agent": "unit-test" }, ip: "127.0.0.1" };
 

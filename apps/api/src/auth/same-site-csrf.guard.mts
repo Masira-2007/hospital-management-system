@@ -1,6 +1,6 @@
 import { CanActivate, ExecutionContext, ForbiddenException, Injectable } from "@nestjs/common";
-import { getHeader, type RequestLike } from "./auth.types.js";
-import { sessionCookieName } from "./session-auth.guard.js";
+import { getHeader, type RequestLike } from "./auth.types.mjs";
+import { sessionCookieName } from "./session-auth.guard.mjs";
 
 @Injectable()
 export class SameSiteCsrfGuard implements CanActivate {
