@@ -15,7 +15,7 @@ import {
   UseGuards,
 } from "@nestjs/common";
 import { ApiCookieAuth, ApiOperation, ApiTags } from "@nestjs/swagger";
-import type { Prisma } from "../generated/prisma/client.js";
+import type { Prisma } from "../generated/prisma/client.mjs";
 import { PrismaService } from "../database/prisma.service.mjs";
 import {
   createSessionToken,

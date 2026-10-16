@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "postinstall": "prisma generate --schema prisma/schema.prisma",
     "start:dev": "tsx watch src/main.mts",
     "build": "prisma generate && tsc -p tsconfig.build.json",
     "start": "node dist/main.mjs",
