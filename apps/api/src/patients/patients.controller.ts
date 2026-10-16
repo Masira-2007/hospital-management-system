@@ -1,11 +1,11 @@
 import { Controller, ForbiddenException, Get, Query, Req, UseGuards } from "@nestjs/common";
 import { ApiCookieAuth, ApiHeader, ApiOperation, ApiTags } from "@nestjs/swagger";
-import { Prisma } from "../generated/prisma/client";
-import { PrismaService } from "../database/prisma.service";
-import { RequestLike } from "../auth/auth.types";
-import { SessionAuthGuard } from "../auth/session-auth.guard";
-import { TenantMembershipGuard } from "../auth/tenant-membership.guard";
-import { PatientListDto } from "./patient-list.dto";
+import { Prisma } from "../generated/prisma/client.js";
+import { PrismaService } from "../database/prisma.service.js";
+import { RequestLike } from "../auth/auth.types.js";
+import { SessionAuthGuard } from "../auth/session-auth.guard.js";
+import { TenantMembershipGuard } from "../auth/tenant-membership.guard.js";
+import { PatientListDto } from "./patient-list.dto.js";
 
 @ApiTags("patients")
 @ApiCookieAuth("jr-xpert-session")

@@ -2,6 +2,7 @@
   "name": "@jr-xpert/api",
   "version": "0.1.0",
   "private": true,
+  "type": "module",
   "scripts": {
     "start:dev": "tsx watch src/main.ts",
     "build": "prisma generate && tsc -p tsconfig.build.json",

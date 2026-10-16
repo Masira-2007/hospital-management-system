@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { HealthController } from "../src/health.controller";
+import { HealthController } from "../src/health.controller.js";
 
 test("health response reports API liveness without exposing configuration", () => {
   const response = new HealthController({} as never).getHealth();

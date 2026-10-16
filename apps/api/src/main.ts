@@ -5,8 +5,8 @@ import { ValidationPipe } from "@nestjs/common";
 import { NestFactory } from "@nestjs/core";
 import { DocumentBuilder, SwaggerModule } from "@nestjs/swagger";
 import helmet from "helmet";
-import { AppModule } from "./app.module";
-import { SameSiteCsrfGuard } from "./auth/same-site-csrf.guard";
+import { AppModule } from "./app.module.js";
+import { SameSiteCsrfGuard } from "./auth/same-site-csrf.guard.js";
 
 dotenv.config({ path: resolve(process.cwd(), "../../.env") });
 
