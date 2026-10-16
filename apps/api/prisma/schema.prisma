@@ -15,6 +15,21 @@ enum AccountStatus {
   DISABLED
 }
 
+enum TenantStatus {
+  PROVISIONING
+  ACTIVE
+  SUSPENDED
+  DEACTIVATED
+}
+
+enum SubscriptionStatus {
+  TRIALING
+  ACTIVE
+  PAST_DUE
+  CANCELED
+  EXPIRED
+}
+
 enum MembershipRole {
   PLATFORM_ADMIN
   ORGANIZATION_OWNER
@@ -61,6 +76,7 @@ model Organization {
   timezone    String       @default("Asia/Kolkata")
   currency    String       @default("INR")
   locale      String       @default("en-IN")
+  status      TenantStatus @default(PROVISIONING)
   createdAt   DateTime     @default(now())
   updatedAt   DateTime     @updatedAt
   hospitals   Hospital[]
@@ -77,12 +93,15 @@ model Hospital {
   slug           String
   timezone       String        @default("Asia/Kolkata")
   currency       String        @default("INR")
+  status         TenantStatus  @default(PROVISIONING)
   createdAt      DateTime      @default(now())
   organization   Organization  @relation(fields: [organizationId], references: [id], onDelete: Restrict)
   branches       Branch[]
   memberships    Membership[]
   patients       Patient[]
   appointments   Appointment[]
+  settings       HospitalSettings?
+  subscriptions  HospitalSubscription[]
 
   @@unique([organizationId, slug])
   @@unique([id, organizationId])
@@ -95,6 +114,7 @@ model Branch {
   name       String
   code       String
   timezone   String        @default("Asia/Kolkata")
+  status     TenantStatus  @default(PROVISIONING)
   createdAt  DateTime      @default(now())
   hospital   Hospital     @relation(fields: [hospitalId], references: [id], onDelete: Restrict)
   memberships Membership[]
@@ -123,6 +143,8 @@ model User {
   memberships     Membership[]
   auditEvents     AuditEvent[]
   sessions        Session[]
+  passwordResetTokens PasswordResetToken[]
+  patientAccessGrants PatientAccessGrant[]
 
   @@index([status])
 }
@@ -134,6 +156,7 @@ model Membership {
   hospitalId     String?
   branchId       String?
   role           MembershipRole
+  roleDefinition Role          @relation(fields: [role], references: [code], onDelete: Restrict)
   status         AccountStatus  @default(INVITED)
   department     String?
   expiresAt      DateTime?
@@ -167,6 +190,7 @@ model Patient {
   hospital       Hospital     @relation(fields: [hospitalId, organizationId], references: [id, organizationId], onDelete: Restrict)
   branch         Branch?      @relation(fields: [branchId, hospitalId], references: [id, hospitalId], onDelete: Restrict)
   appointments   Appointment[]
+  accessGrants   PatientAccessGrant[]
 
   @@unique([organizationId, mrn])
   @@unique([id, organizationId])
@@ -227,6 +251,106 @@ model Session {
   user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, expiresAt])
+}
+
+model PasswordResetToken {
+  id        String    @id @default(cuid())
+  userId    String
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, expiresAt])
+  @@index([expiresAt, usedAt])
+}
+
+model Role {
+  code           MembershipRole @id
+  name           String
+  description    String?
+  platformScoped Boolean        @default(false)
+  memberships    Membership[]
+  permissions    RolePermission[]
+}
+
+model Permission {
+  code        String           @id
+  description String
+  roles       RolePermission[]
+}
+
+model RolePermission {
+  roleCode     MembershipRole @map("role")
+  permissionId String
+  role         Role           @relation(fields: [roleCode], references: [code], onDelete: Cascade)
+  permission   Permission     @relation(fields: [permissionId], references: [code], onDelete: Cascade)
+
+  @@id([roleCode, permissionId])
+  @@index([permissionId])
+}
+
+model HospitalSettings {
+  id              String   @id @default(cuid())
+  hospitalId      String   @unique
+  timezone        String   @default("Asia/Kolkata")
+  currency        String   @default("INR")
+  locale          String   @default("en-IN")
+  invoiceSettings Json?
+  taxSettings     Json?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  hospital        Hospital @relation(fields: [hospitalId], references: [id], onDelete: Restrict)
+}
+
+model SubscriptionPlan {
+  id           String                 @id @default(cuid())
+  code         String                 @unique
+  name         String
+  active       Boolean                @default(true)
+  entitlements Json
+  createdAt    DateTime               @default(now())
+  updatedAt    DateTime               @updatedAt
+  subscriptions HospitalSubscription[]
+}
+
+model HospitalSubscription {
+  id                 String             @id @default(cuid())
+  organizationId     String
+  hospitalId         String
+  planId             String
+  status             SubscriptionStatus @default(TRIALING)
+  trialEndsAt        DateTime?
+  currentPeriodStart DateTime
+  currentPeriodEnd   DateTime
+  canceledAt         DateTime?
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+  hospital           Hospital           @relation(fields: [hospitalId, organizationId], references: [id, organizationId], onDelete: Restrict)
+  plan               SubscriptionPlan   @relation(fields: [planId], references: [id], onDelete: Restrict)
+
+  @@index([organizationId, hospitalId, status])
+  @@index([status, currentPeriodEnd])
+}
+
+model PatientAccessGrant {
+  id             String    @id @default(cuid())
+  userId         String
+  patientId      String
+  organizationId String
+  relationship   String    @default("SELF")
+  canViewRecords Boolean   @default(false)
+  canManageCare  Boolean   @default(false)
+  expiresAt      DateTime?
+  revokedAt      DateTime?
+  createdAt      DateTime  @default(now())
+  user           User      @relation(fields: [userId], references: [id], onDelete: Restrict)
+  patient        Patient   @relation(fields: [patientId, organizationId], references: [id, organizationId], onDelete: Restrict)
+
+  @@unique([userId, patientId])
+  @@index([userId, organizationId, revokedAt])
+  @@index([patientId, organizationId, revokedAt])
 }
 
 model AuthRateLimit {

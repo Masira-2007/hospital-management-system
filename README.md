@@ -2,41 +2,29 @@
 
 **Better Care. Smarter Management. Healthier Tomorrow.**
 
-JR Xpert HMS is an in-progress multi-hospital healthcare platform. The web workspace remains a responsive visual preview with fictional sample records. This increment adds an API security foundation and a narrowly scoped patient-directory endpoint; it is not a complete or production-certified hospital system.
+JR Xpert HMS is an in-progress, multi-hospital healthcare platform. The current public dashboard remains a visual preview using fictional sample records. The web app, API and database are not yet connected in a deployed environment; do not enter real patient information.
 
-## Current increment
+## What is implemented
 
-- Public JR Xpert product page and responsive hospital workspace preview.
-- The supplied JR Xpert HMS logo is cropped from the provided image and reused in the public header, dashboard sidebar, preview and footer.
-- The codebase contains no “Trusted by 100+ Hospitals” badge or count.
-- NestJS API with Helmet headers, exact-origin CORS allowlist, unsafe-request Origin checks, strict DTO validation, bounded patient queries and production-disabled Swagger.
-- Password authentication using salted scrypt hashes; MFA/TOTP required for privileged roles; opaque server-managed `HttpOnly`, `SameSite=Strict` sessions; 12-hour expiry; session listing/revocation; password change and revocation of existing sessions.
-- Database-backed login throttles, generic authentication failures and audit events for login, logout, password changes, session revocation and patient-directory access.
-- Tenant context is resolved from authenticated memberships. Patient directory access is scoped by organization, hospital and optionally branch, with role checks and compound tenant/hospital/branch foreign keys.
-- PostgreSQL Prisma schema and an initial migration for organizations, hospitals, branches, users, memberships, patients, appointments, audit events, sessions and rate-limit buckets.
-- Unit coverage for password/session/TOTP primitives and tenant-membership enforcement.
+- JR Xpert public product page, logo and responsive dashboard preview. The preview uses fictional records and is not an operational EHR.
+- Responsive `/login`, `/forgot-password`, `/reset-password` and `/workspace` pages. Hospital and patient login modes, password visibility, optional MFA code, and server-managed remember-me session lengths are wired to the API through an allowlisted same-origin Next.js route handler.
+- NestJS API with versioned REST routes, strict DTO validation, Helmet, exact-origin CORS and CSRF origin checks for state-changing requests.
+- Active, email-verified account login using scrypt password hashes, opaque server-managed `HttpOnly`, `SameSite=Strict` cookies, MFA/TOTP enforcement for privileged roles, database-backed rate limiting, session revocation, password reset tokens stored as hashes, and audit events.
+- Resend password recovery adapter. It returns a setup error until `RESEND_API_KEY`, a verified `AUTH_EMAIL_FROM`, and `APP_URL` are configured; it never reports a fake email delivery.
+- Multi-hospital schema for organizations, hospitals, branches, memberships, role definitions, permissions, hospital settings, subscriptions, and patient access grants. Hospital status and membership are checked server-side.
+- Patient-directory read endpoint with role-permission lookup, verified tenant membership, a limited field set, bounded search/pagination, access auditing, and transaction-scoped PostgreSQL row-level security for patient and appointment reads.
+- Append-only audit-event triggers and a database readiness endpoint that returns no connection details.
+- Prisma migrations and safe placeholder environment configuration.
 
-All browser dashboard records are still fictional and the web UI is not connected to the API. No real patient data should be entered into the preview.
+## Not ready for real patient data
 
-## API scope and limits
+The Neon organization and `JR Xpert HMS` PostgreSQL project have been created on the Free Plan in AWS Asia Pacific 1 (Singapore). The Prisma migrations have not been applied, and no database connection URL has been configured for the application. The existing Vercel web project is connected to Git, but it has no application environment variables; the NestJS API has not yet been deployed. Until API configuration is complete, the login BFF returns an explicit `API_NOT_CONFIGURED` message.
 
-Implemented endpoints under `/api/v1`:
+Other unfinished scope includes hospital onboarding and staff invitation flows, MFA enrollment, patient registration and clinical EMR writes, appointments, nursing/ward/OT workflows, pharmacy, laboratory, billing and payments, insurance, inventory, HR/payroll, mobile apps, notifications beyond password recovery, AI workflows, production monitoring/backups, and end-to-end testing against PostgreSQL. This is not a complete HMS or a compliance certification.
 
-- `GET /health`
-- `POST /auth/login`
-- `GET /auth/me`
-- `POST /auth/logout`
-- `POST /auth/password`
-- `GET /auth/sessions`
-- `DELETE /auth/sessions/:sessionId`
-- `POST /auth/sessions/revoke-others`
-- `GET /patients` (requires an authenticated session, active permitted role, and `x-organization-id` plus `x-hospital-id`; optionally `x-branch-id`)
+## Local development
 
-Accounts must be provisioned and verified by a controlled operator process. There is no public registration, invitation/email verification, password recovery, MFA enrollment UI, SSO/passkeys, Redis-backed queue, clinical EMR write API, appointment booking API, payments, pharmacy, laboratory, mobile app or insurance integration yet. MFA enrollment requires a protected provisioning process and a securely stored encrypted TOTP secret. The API does not currently implement PostgreSQL row-level security; every enabled data query must continue to use tenant-scoped service logic and should receive a separate security review before real PHI is used.
-
-## Run locally
-
-Requirements: Node.js 24.15+ and npm.
+Requirements: Node.js 24.15+ and npm. Copy `.env.example` to `.env`, then replace every placeholder with local development values. Do not commit `.env`.
 
 ```powershell
 Copy-Item .env.example .env
@@ -47,11 +35,7 @@ npm run db:migrate:dev --workspace @jr-xpert/api
 npm run dev
 ```
 
-The web preview runs at `http://localhost:3000`, the API at `http://localhost:4000/api/v1`, and development-only Swagger at `http://localhost:4000/api/docs`.
-
-Values in `.env.example` are local placeholders. Replace every secret with a secret-manager generated value before deployment. Production startup requires `DATABASE_URL`, exact HTTPS `WEB_ORIGIN` entries, a unique 32+ character `AUTH_RATE_LIMIT_SECRET`, and a 32-byte hex `MFA_ENCRYPTION_KEY`. The web app currently does not call the API.
-
-## Verification
+The web app runs at `http://localhost:3000`; the API runs at `http://localhost:4000/api/v1`; development-only OpenAPI UI is exposed by the API. Provide a PostgreSQL URL before starting the API. For local migrations, `DIRECT_URL` can point to the same local database.
 
 ```powershell
 npm test
@@ -59,10 +43,29 @@ npm run db:validate
 npm run build
 ```
 
-These checks cover compilation, schema validity, API liveness and selected security primitives/access-control behavior. They do not certify database isolation under production concurrency, clinical safety, legal compliance, payment processing, backups or operational readiness.
+If a local Next dev server holds `.next` open, run a separate verification build with `$env:NEXT_DIST_DIR='.next-verify'; npm run build`.
 
-## Deployment status
+## Neon and Vercel setup
 
-The connected Vercel project builds the Next.js app in `apps/web`. A Git push can deploy the updated website, but it does not host this NestJS API or provide its PostgreSQL database and secrets. Production API activation requires a separately configured API runtime, managed PostgreSQL, migration execution, secret provisioning, approved domain/origin configuration, monitoring and a security review. Do not connect real patient data until those are in place.
+The monorepo contains two separately deployable applications. Vercel documents NestJS as a supported single-function backend and supports separate projects for folders in a monorepo ([NestJS](https://vercel.com/docs/frameworks/backend/nestjs), [monorepos](https://vercel.com/docs/monorepos)).
 
-See [PRODUCT_SPEC.md](./PRODUCT_SPEC.md) for the full feature scope and implementation status.
+1. The Neon Free Plan project is already created. In Neon, retrieve the **pooled** URL for runtime and the **direct** URL for migrations. Keep both private and add them only to protected environment settings or ignored local environment files.
+2. Apply the reviewed migration to a non-production database with `npm run db:migrate:deploy --workspace @jr-xpert/api`, after configuring `DIRECT_URL` and `DATABASE_URL`. Check that the migration succeeds and test the row-level security policies before using real data.
+3. Create a Vercel project for the API from the same Git repository with Root Directory `apps/api`. Set protected API environment variables: `DATABASE_URL`, `DIRECT_URL`, `APP_URL`, `WEB_ORIGIN`, `AUTH_RATE_LIMIT_SECRET`, `MFA_ENCRYPTION_KEY`. Set `RESEND_API_KEY` and a verified `AUTH_EMAIL_FROM` only when password recovery email is ready.
+4. Deploy the API and verify `/api/v1/health` and `/api/v1/health/ready`. The readiness endpoint must report 503 until it can reach PostgreSQL.
+5. In the existing web project (Root Directory `apps/web`), set server-only `JR_XPERT_API_URL` to the API’s `https://.../api/v1` URL and `WEB_ORIGIN` to the exact HTTPS web origin. Do not use `NEXT_PUBLIC_` for API secrets or connection strings.
+6. Deploy the web app, test login, logout, remember-me, password visibility, recovery pages and tenant isolation against non-production test accounts, then review logs for errors. Do not provision real patient data until the production database role, RLS, backups, access policies and compliance obligations have been reviewed.
+
+Production API startup also requires `DATABASE_URL`, an HTTPS `APP_URL` included in the exact `WEB_ORIGIN` allowlist, a unique 32+ character `AUTH_RATE_LIMIT_SECRET`, and a 32-byte hexadecimal `MFA_ENCRYPTION_KEY`. Use a least-privilege runtime database role that is neither superuser nor `BYPASSRLS`; `FORCE ROW LEVEL SECURITY` cannot constrain those privileged PostgreSQL roles. Use separate preview/staging/production credentials and databases.
+
+The Neon project is confirmed on the Free Plan at $0/month; no payment was made. Its connection details have not been copied into the application, and migrations have not been applied. The existing Vercel project is connected to the Git repository, but it has no database/API environment settings. No production API deployment or live authenticated login has been verified.
+
+## Security notes
+
+- Tenant identifiers from request headers are only context selectors; every selection is checked against active memberships and active hospital records.
+- The patient endpoint applies tenant filters and PostgreSQL RLS in the same interactive transaction; GUC tenant context is transaction-local for connection-pool safety.
+- The production runtime DB role must not bypass RLS. A database migration succeeding alone is not proof of isolation.
+- The preview uses synthetic information only. The current API implements a patient directory read, not full clinical records.
+- Security controls do not establish DPDP, ABDM, HIPAA, or other legal/compliance status. Obtain the required legal, operational and technical review before production healthcare use.
+
+See [PRODUCT_SPEC.md](./PRODUCT_SPEC.md) for the larger product scope and implementation status.

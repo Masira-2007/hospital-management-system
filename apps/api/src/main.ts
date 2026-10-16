@@ -1,12 +1,12 @@
 import "reflect-metadata";
 import dotenv from "dotenv";
 import { resolve } from "node:path";
-import { CanActivate, ExecutionContext, ForbiddenException, Injectable, ValidationPipe } from "@nestjs/common";
+import { ValidationPipe } from "@nestjs/common";
 import { NestFactory } from "@nestjs/core";
 import { DocumentBuilder, SwaggerModule } from "@nestjs/swagger";
 import helmet from "helmet";
 import { AppModule } from "./app.module";
-import { RequestLike } from "./auth/auth.types";
+import { SameSiteCsrfGuard } from "./auth/same-site-csrf.guard";
 
 dotenv.config({ path: resolve(process.cwd(), "../../.env") });
 
@@ -33,30 +33,19 @@ function getAllowedOrigins(): string[] {
       throw new Error("WEB_ORIGIN entries must be exact origins; production origins must use HTTPS.");
     }
   }
-  return origins;
-}
-
-@Injectable()
-class SameSiteCsrfGuard implements CanActivate {
-  constructor(private readonly allowedOrigins: string[]) {}
-
-  canActivate(context: ExecutionContext): boolean {
-    const request = context.switchToHttp().getRequest<RequestLike & { method?: string }>();
-    const method = request.method?.toUpperCase() ?? "GET";
-    if (["GET", "HEAD", "OPTIONS"].includes(method)) return true;
-
-    const originValue = request.headers.origin;
-    const origin = Array.isArray(originValue) ? originValue[0] : originValue;
-    if (origin && !this.allowedOrigins.includes(origin)) {
-      throw new ForbiddenException("Request origin is not allowed.");
+  if (process.env.NODE_ENV === "production") {
+    const appUrl = process.env.APP_URL;
+    let parsedAppUrl: URL;
+    try {
+      parsedAppUrl = new URL(appUrl ?? "");
+    } catch {
+      throw new Error("Production startup requires APP_URL set to the exact public web-app origin.");
     }
-    const cookieValue = request.headers.cookie;
-    const cookie = Array.isArray(cookieValue) ? cookieValue.join(";") : cookieValue ?? "";
-    if (cookie.includes("jrxpert_session=") && !origin) {
-      throw new ForbiddenException("An Origin header is required for session-authenticated changes.");
+    if (parsedAppUrl.origin !== appUrl || parsedAppUrl.protocol !== "https:" || !origins.includes(parsedAppUrl.origin)) {
+      throw new Error("Production APP_URL must be an HTTPS origin included in WEB_ORIGIN.");
     }
-    return true;
   }
+  return origins;
 }
 
 async function bootstrap() {
@@ -93,7 +82,7 @@ async function bootstrap() {
     SwaggerModule.setup("api/docs", app, SwaggerModule.createDocument(app, openApi));
   }
   app.enableShutdownHooks();
-  await app.listen(process.env.API_PORT ? Number(process.env.API_PORT) : 4000);
+  await app.listen(process.env.PORT ? Number(process.env.PORT) : process.env.API_PORT ? Number(process.env.API_PORT) : 4000);
 }
 
 void bootstrap();

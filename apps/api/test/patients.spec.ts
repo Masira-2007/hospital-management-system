@@ -8,6 +8,7 @@ import { PatientsController } from "../src/patients/patients.controller";
 test("patient directory applies organization, hospital and branch filters and returns a limited field set", async () => {
   let listQuery: Record<string, unknown> | undefined;
   let auditData: Record<string, unknown> | undefined;
+  let rlsContext: unknown;
   const patient = {
     id: "patient-1",
     mrn: "MRN-1",
@@ -17,6 +18,15 @@ test("patient directory applies organization, hospital and branch filters and re
     createdAt: new Date("2026-01-01T00:00:00Z"),
   };
   const prisma = {
+    rolePermission: { findFirst: async () => ({ permissionId: "patient.directory.read" }) },
+    $transaction: async (callback: (transaction: Record<string, unknown>) => Promise<unknown>) => callback({
+      $queryRaw: async (query: unknown) => { rlsContext = query; return []; },
+      patient: {
+        findMany: async (query: Record<string, unknown>) => { listQuery = query; return [patient]; },
+        count: async () => 1,
+      },
+      auditEvent: { create: async ({ data }: { data: Record<string, unknown> }) => { auditData = data; } },
+    }),
     patient: {
       findMany: async (query: Record<string, unknown>) => {
         listQuery = query;
@@ -24,8 +34,6 @@ test("patient directory applies organization, hospital and branch filters and re
       },
       count: async () => 1,
     },
-    $transaction: async (operations: Promise<unknown>[]) => Promise.all(operations),
-    auditEvent: { create: async ({ data }: { data: Record<string, unknown> }) => { auditData = data; } },
   } as unknown as PrismaService;
   const controller = new PatientsController(prisma);
   const request: RequestLike = {
@@ -59,11 +67,14 @@ test("patient directory applies organization, hospital and branch filters and re
   });
   assert.deepEqual(listQuery?.select, { id: true, mrn: true, firstName: true, lastName: true, phone: true, createdAt: true });
   assert.deepEqual(result.items, [patient]);
+  assert.ok(rlsContext, "request installs transaction-scoped tenant context for PostgreSQL RLS");
   assert.equal(JSON.stringify(auditData).includes("Shah"), false);
 });
 
 test("patient directory denies an authenticated role without directory permission", async () => {
-  const controller = new PatientsController({} as PrismaService);
+  const controller = new PatientsController({
+    rolePermission: { findFirst: async () => null },
+  } as unknown as PrismaService);
   const request: RequestLike = {
     headers: {},
     authSession: { id: "session-1", user: { id: "user-1", email: "staff@example.test", displayName: "Staff" } },

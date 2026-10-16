@@ -28,13 +28,14 @@ export class TenantMembershipGuard implements CanActivate {
         OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
       },
       include: {
-        organization: { select: { id: true, name: true } },
+        organization: { select: { id: true, name: true, status: true } },
         hospital: { select: { id: true, name: true } },
         branch: { select: { id: true, name: true, hospitalId: true } },
       },
     });
 
     const eligible = memberships.filter((membership) => {
+      if (membership.organization.status !== "ACTIVE") return false;
       if (membership.hospitalId && membership.hospitalId !== hospitalId) return false;
       if (membership.branchId && membership.branchId !== branchId) return false;
       return true;
@@ -45,7 +46,7 @@ export class TenantMembershipGuard implements CanActivate {
     let branchName: string | null = null;
     if (hospitalId) {
       const hospital = await this.prisma.hospital.findFirst({
-        where: { id: hospitalId, organizationId },
+        where: { id: hospitalId, organizationId, status: "ACTIVE" },
         select: { name: true },
       });
       if (!hospital) throw new ForbiddenException("No active membership grants access to this hospital context.");
@@ -53,7 +54,7 @@ export class TenantMembershipGuard implements CanActivate {
     }
     if (branchId && hospitalId) {
       const branch = await this.prisma.branch.findFirst({
-        where: { id: branchId, hospitalId },
+        where: { id: branchId, hospitalId, status: "ACTIVE" },
         select: { name: true },
       });
       if (!branch) throw new ForbiddenException("No active membership grants access to this hospital context.");

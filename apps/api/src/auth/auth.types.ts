@@ -1,3 +1,5 @@
+import type { MembershipRole } from "../generated/prisma/client";
+
 export interface RequestLike {
   headers: Record<string, string | string[] | undefined>;
   ip?: string;
@@ -12,7 +14,7 @@ export interface RequestLike {
     hospitalName: string | null;
     branchId: string | null;
     branchName: string | null;
-    memberships: Array<{ id: string; role: string; department: string | null }>;
+    memberships: Array<{ id: string; role: MembershipRole; department: string | null }>;
   };
 }
 

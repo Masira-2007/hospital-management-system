@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { createCipheriv, createHmac, randomBytes } from "node:crypto";
 import { test } from "node:test";
+import { ExecutionContext, ForbiddenException } from "@nestjs/common";
+import { SameSiteCsrfGuard } from "../src/auth/same-site-csrf.guard";
 import {
   createSessionToken,
   hashPassword,
@@ -64,5 +66,48 @@ test("rate-limit keys are keyed digests and MFA TOTP accepts only the encrypted 
     else process.env.AUTH_RATE_LIMIT_SECRET = originalRateKey;
     if (originalMfaKey === undefined) delete process.env.MFA_ENCRYPTION_KEY;
     else process.env.MFA_ENCRYPTION_KEY = originalMfaKey;
+  }
+});
+
+test("CSRF guard requires an allowed Origin for the production __Host session cookie", () => {
+  const originalNodeEnv = process.env.NODE_ENV;
+  process.env.NODE_ENV = "production";
+  const guard = new SameSiteCsrfGuard(["https://hms.example"]);
+  const request = {
+    method: "POST",
+    headers: { cookie: "other=value; __Host-jrxpert_session=opaque" },
+  };
+  const context = {
+    switchToHttp: () => ({ getRequest: () => request }),
+  } as unknown as ExecutionContext;
+
+  try {
+    assert.throws(() => guard.canActivate(context), ForbiddenException);
+    request.headers = { ...request.headers, origin: "https://hms.example" };
+    assert.equal(guard.canActivate(context), true);
+    request.headers = { ...request.headers, origin: "https://attacker.example" };
+    assert.throws(() => guard.canActivate(context), ForbiddenException);
+  } finally {
+    if (originalNodeEnv === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = originalNodeEnv;
+  }
+});
+
+test("CSRF guard recognizes the development session cookie and leaves safe methods alone", () => {
+  const originalNodeEnv = process.env.NODE_ENV;
+  process.env.NODE_ENV = "development";
+  const guard = new SameSiteCsrfGuard(["http://localhost:3000"]);
+  const request = { method: "POST", headers: { cookie: "jrxpert_session=opaque" } };
+  const context = {
+    switchToHttp: () => ({ getRequest: () => request }),
+  } as unknown as ExecutionContext;
+
+  try {
+    assert.throws(() => guard.canActivate(context), ForbiddenException);
+    request.method = "GET";
+    assert.equal(guard.canActivate(context), true);
+  } finally {
+    if (originalNodeEnv === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = originalNodeEnv;
   }
 });

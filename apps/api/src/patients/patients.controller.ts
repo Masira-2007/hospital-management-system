@@ -7,16 +7,6 @@ import { SessionAuthGuard } from "../auth/session-auth.guard";
 import { TenantMembershipGuard } from "../auth/tenant-membership.guard";
 import { PatientListDto } from "./patient-list.dto";
 
-const PATIENT_DIRECTORY_ROLES = new Set([
-  "HOSPITAL_ADMIN",
-  "HOSPITAL_MANAGER",
-  "MEDICAL_DIRECTOR",
-  "DOCTOR",
-  "SPECIALIST_DOCTOR",
-  "NURSE",
-  "RECEPTIONIST",
-]);
-
 @ApiTags("patients")
 @ApiCookieAuth("jr-xpert-session")
 @UseGuards(SessionAuthGuard, TenantMembershipGuard)
@@ -33,7 +23,14 @@ export class PatientsController {
     const userId = request.authSession!.user.id;
     const tenant = request.tenant!;
     if (!tenant.hospitalId) throw new ForbiddenException("A hospital context is required for patient data.");
-    if (!tenant.memberships.some((membership) => PATIENT_DIRECTORY_ROLES.has(membership.role))) {
+    const permission = await this.prisma.rolePermission.findFirst({
+      where: {
+        permissionId: "patient.directory.read",
+        roleCode: { in: tenant.memberships.map(({ role }) => role) },
+      },
+      select: { permissionId: true },
+    });
+    if (!permission) {
       throw new ForbiddenException("Your active role does not grant patient-directory access.");
     }
 
@@ -54,32 +51,40 @@ export class PatientsController {
         : {}),
     };
     const skip = (query.page - 1) * query.limit;
-    const [items, total] = await this.prisma.$transaction([
-      this.prisma.patient.findMany({
-        where,
-        orderBy: [{ lastName: "asc" }, { firstName: "asc" }, { id: "asc" }],
-        skip,
-        take: query.limit,
-        select: { id: true, mrn: true, firstName: true, lastName: true, phone: true, createdAt: true },
-      }),
-      this.prisma.patient.count({ where }),
-    ]);
-
-    await this.prisma.auditEvent.create({
-      data: {
-        organizationId: tenant.organizationId,
-        actorUserId: userId,
-        action: "patient.directory_listed",
-        resourceType: "patient_directory",
-        metadata: {
-          hospitalId: tenant.hospitalId,
-          branchScoped: Boolean(tenant.branchId),
-          page: query.page,
-          limit: query.limit,
-          resultCount: items.length,
-          searchUsed: Boolean(searchTerm),
-        } as Prisma.InputJsonObject,
-      },
+    const { items, total } = await this.prisma.$transaction(async (transaction) => {
+      // Transaction-local settings are consumed by PostgreSQL RLS policies and cannot leak through a pooled connection.
+      await transaction.$queryRaw`SELECT
+        set_config('app.user_id', ${userId}, true),
+        set_config('app.organization_id', ${tenant.organizationId}, true),
+        set_config('app.hospital_id', ${tenant.hospitalId}, true),
+        set_config('app.branch_id', ${tenant.branchId ?? ""}, true)`;
+      const [items, total] = await Promise.all([
+        transaction.patient.findMany({
+          where,
+          orderBy: [{ lastName: "asc" }, { firstName: "asc" }, { id: "asc" }],
+          skip,
+          take: query.limit,
+          select: { id: true, mrn: true, firstName: true, lastName: true, phone: true, createdAt: true },
+        }),
+        transaction.patient.count({ where }),
+      ]);
+      await transaction.auditEvent.create({
+        data: {
+          organizationId: tenant.organizationId,
+          actorUserId: userId,
+          action: "patient.directory_listed",
+          resourceType: "patient_directory",
+          metadata: {
+            hospitalId: tenant.hospitalId,
+            branchScoped: Boolean(tenant.branchId),
+            page: query.page,
+            limit: query.limit,
+            resultCount: items.length,
+            searchUsed: Boolean(searchTerm),
+          } as Prisma.InputJsonObject,
+        },
+      });
+      return { items, total };
     });
 
     return {

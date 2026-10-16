@@ -1,5 +1,9 @@
 node_modules/
 .next/
+.next-*/
+.next-verify/
+.next-build-*/
+.next-buildcheck/
 dist/
 coverage/
 .env

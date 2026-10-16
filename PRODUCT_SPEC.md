@@ -25,10 +25,10 @@ This document tracks the user-provided master prompt. It is a scope record, not 
 | Patient portal | Secure patient access, scheduling, reports, bills, consent and dependents | Not started |
 | Mobile apps | Android/iOS Expo app, secure storage, biometrics, push and offline state | Not started |
 | Super Admin SaaS | Tenant onboarding, subscriptions, usage, system health and support | Not started |
-| Multi-tenant core | Organizations, hospital groups, hospitals, branches, locations, tenant settings and subscriptions | Organization/hospital/branch/membership schema; compound tenant/hospital/branch relations; runtime membership-verified context for patient directory. No PostgreSQL RLS or subscription/tenant onboarding workflows yet |
-| Authentication and identity | Verification, recovery, secure hashing, MFA, sessions, SSO, rate limits and device management | Scrypt password verification, email-verified active-account check, TOTP requirement for privileged roles, 12-hour server-side sessions, password change, session listing/revocation and database login throttling. No enrollment, invitations, verification delivery, recovery, SSO or passkeys |
-| Permissions and audit | Granular role/attribute access, scope, expiry, revocation, break-glass and reviewable audit | Active membership, expiry, organization/hospital/branch scoping and patient-directory role check; auth and patient-directory audit events. No fine-grained clinical ABAC, approvals, break-glass or audit review interface |
-| Patient EMR/EHR | Registration, MRN, history, allergies, encounters, medication, notes, results, consent, signatures, amendments and exports | Tenant-scoped, paginated patient-directory read API only. The web directory remains fictional preview data; no clinical record writes or EMR/EHR workflows |
+| Multi-tenant core | Organizations, hospital groups, hospitals, branches, locations, tenant settings and subscriptions | Organization/hospital/branch/membership, status, role, permission, subscription, settings and patient-access-grant schema; runtime membership-verified scope; transaction-scoped PostgreSQL RLS policies for Patient and Appointment reads. No onboarding workflows; Neon Free project created, but database migration is not applied |
+| Authentication and identity | Verification, recovery, secure hashing, MFA, sessions, SSO, rate limits and device management | Login UI and same-origin BFF; hospital/patient mode filters; scrypt password verification; email-verified active-account check; TOTP required for privileged roles; 12-hour/30-day server-side sessions; password change, session listing/revocation, database throttling, one-use hashed reset tokens and a Resend adapter. No public registration, staff invitations, MFA enrollment, SSO or passkeys. Recovery email requires provider setup |
+| Permissions and audit | Granular role/attribute access, scope, expiry, revocation, break-glass and reviewable audit | Role/permission tables and `patient.directory.read` permission seed; active membership and tenant status checks; patient directory scope check; audit events and append-only database triggers. No fine-grained clinical ABAC, approvals, break-glass or audit review interface |
+| Patient EMR/EHR | Registration, MRN, history, allergies, encounters, medication, notes, results, consent, signatures, amendments and exports | Tenant-scoped, paginated patient-directory read API only. The web directory remains fictional preview data; no clinical record writes or EMR/EHR workflows. Patient access grants are schema only |
 | Appointments and queues | Availability, booking, conflict prevention, walk-ins, tokens, queue, reminders and no-shows | Fictional schedule preview only; no booking API |
 | Doctor/nurse workflow | Clinical documentation, medication administration, observations, handover and escalation | Not started |
 | OPD/IPD/ICU/OT/emergency | Admissions, beds, transfers, triage, surgery, discharge coordination and ambulance | Not started |
@@ -41,14 +41,14 @@ This document tracks the user-provided master prompt. It is a scope record, not 
 | Communication | Telemedicine, notifications, reminders and patient support | Not started |
 | AI/operations intelligence | Approved-data assistant and operational workflows with human review | Not started; prompt content is truncated during section 19.E |
 | Integrations and API | Versioned REST/OpenAPI, realtime, gateways, analyzers, PACS, insurer and accounting adapters | Versioned NestJS health/auth/session/patient-directory endpoints; OpenAPI available only outside production. No external service adapters or API-to-web integration |
-| Infrastructure | PostgreSQL, Prisma migrations, Redis/jobs, private S3-compatible files, Docker, CI/CD, monitoring, backup and environments | Compose foundation for PostgreSQL/Redis; no production operations |
-| Quality and documentation | Unit, integration, API, end-to-end, threat/privacy review and deployment guides | API liveness, password/session/TOTP primitive and tenant-guard unit tests; schema validation/build instructions. No production database integration, end-to-end suite, threat/privacy review or clinical/security certification |
+| Infrastructure | PostgreSQL, Prisma migrations, Redis/jobs, private S3-compatible files, Docker, CI/CD, monitoring, backup and environments | PostgreSQL/Redis Compose foundation; runtime pool limits; readiness endpoint; API and web deployment instructions. Neon project exists on the Free Plan; connection/migrations and Vercel API project remain pending; no production operations |
+| Quality and documentation | Unit, integration, API, end-to-end, threat/privacy review and deployment guides | 16 API unit tests, Prisma validation and web/API production build pass. No PostgreSQL integration, end-to-end browser suite, cross-tenant proof against a live database, threat/privacy review or clinical/security certification |
 
 ## Required architecture and product constraints
 
 - Prefer a modular monolith with clean domain boundaries and an option to separate high-load modules later.
 - Intended stack: Next.js, React and TypeScript; Tailwind CSS and reusable accessible components; NestJS/TypeScript; PostgreSQL with Prisma; Redis and a reliable job queue; versioned REST/OpenAPI; realtime only where appropriate; React Native/Expo; private S3-compatible object storage; Docker and separate development, staging and production environments.
-- Never authorize a tenant by trusting a client-supplied tenant ID. Resolve tenant context from authenticated membership and enforce it through every data-access path; assess PostgreSQL row-level security as defense in depth. The current directory endpoint applies scoped queries; RLS is not configured.
+- Never authorize a tenant by trusting a client-supplied tenant ID. Resolve tenant context from authenticated membership and enforce it through every data-access path. The patient-directory query applies scoped Prisma filters and transaction-local RLS policies; those policies still require migration application and a non-superuser, non-`BYPASSRLS` runtime role.
 - Platform Super Admin must not automatically receive access to patient records. Any emergency access/impersonation requires explicit purpose, time limits, disclosure, audit and alerting.
 - Do not silently overwrite signed clinical records. Preserve authorship, signatures, timestamps, amendments and history.
 - Verify payments server-side and provider webhooks cryptographically; use idempotency; distinguish payment, capture, settlement, refund and reconciliation. Do not store raw card data. Manual payments remain explicitly offline and auditable.
@@ -56,6 +56,15 @@ This document tracks the user-provided master prompt. It is a scope record, not 
 - Keep real patient data out of this preview. No clinical/financial write APIs should be exposed before authentication, tenant isolation, authorization, audit, privacy and safety controls are implemented and reviewed.
 
 ## Increment history
+
+### 0.3.0 — Authentication flow, permissions and RLS migration
+
+- Added responsive hospital/patient login modes, password visibility, remember-me behavior, forgot/reset-password screens and an authenticated affiliation summary page.
+- Added a same-origin Next.js BFF with a fixed authentication route allowlist, same-origin checks, server-only API configuration, safe forwarding of the session cookie and no-store responses.
+- Added server-side hospital/patient login mode filtering, 12-hour/30-day session durations, one-use hashed reset tokens, session revocation after password reset, Resend delivery adapter and a non-sensitive database-readiness endpoint.
+- Added tenant activation state, role/permission and hospital settings/subscription/patient-access-grant tables, seed roles and limited directory permission, transaction-scoped RLS policies and append-only audit-event triggers.
+- Added auth/reset/session, readiness and tenant-isolation unit tests. Current run: 16/16 API unit tests pass; Prisma schema validates; web/API build passes.
+- Neon project creation is complete on the Free Plan. Secure connection configuration and migrations are pending. The API has no production Vercel deployment or environment variables; the app is not ready for real patient data.
 
 ### 0.2.0 — Security and identity foundation
 

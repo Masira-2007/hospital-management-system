@@ -10,6 +10,7 @@ import {
   Post,
   Req,
   Res,
+  ServiceUnavailableException,
   UnauthorizedException,
   UseGuards,
 } from "@nestjs/common";
@@ -27,10 +28,14 @@ import {
 } from "../security/security.crypto";
 import { LoginDto } from "./login.dto";
 import { ChangePasswordDto } from "./change-password.dto";
+import { PasswordResetDto, PasswordResetRequestDto } from "./password-reset.dto";
+import { EmailDeliveryService } from "./email-delivery.service";
 import { getHeader, RequestLike, ResponseLike } from "./auth.types";
 import { SessionAuthGuard, sessionCookieName } from "./session-auth.guard";
 
 const SESSION_DURATION_MS = 12 * 60 * 60 * 1000;
+const REMEMBERED_SESSION_DURATION_MS = 30 * 24 * 60 * 60 * 1000;
+const PASSWORD_RESET_DURATION_MS = 20 * 60 * 1000;
 const RATE_WINDOW_MS = 15 * 60 * 1000;
 const MAX_FAILED_ATTEMPTS = 8;
 const PRIVILEGED_ROLES = new Set([
@@ -52,13 +57,14 @@ const authenticationFailure = () => new UnauthorizedException({
 export class AuthController {
   private throttleCleanupCounter = 0;
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly prisma: PrismaService, private readonly emailDelivery: EmailDeliveryService) {}
 
   @Post("login")
   @HttpCode(200)
   @ApiOperation({ summary: "Create a secure, server-managed session for a verified hospital account" })
   async login(@Body() body: LoginDto, @Req() request: RequestLike, @Res({ passthrough: true }) response: ResponseLike) {
     const email = body.email.trim().toLowerCase();
+    const mode = body.mode ?? "HOSPITAL";
     const keys = this.getRateKeys(email, request.ip ?? "unknown");
     await this.consumeLoginAttempt(keys);
 
@@ -70,6 +76,8 @@ export class AuthController {
           where: {
             status: "ACTIVE",
             OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
+            organization: { status: "ACTIVE" },
+            AND: [{ OR: [{ hospitalId: null }, { hospital: { is: { status: "ACTIVE" } } }] }],
           },
           include: {
             organization: { select: { id: true, name: true, slug: true } },
@@ -85,7 +93,9 @@ export class AuthController {
       ? await verifyPassword(body.password, user.passwordHash)
       : false;
     const accountIsValid = Boolean(
-      user && user.status === "ACTIVE" && user.emailVerifiedAt && user.memberships.length > 0,
+      user && user.status === "ACTIVE" && user.emailVerifiedAt && user.memberships.some(({ role }) =>
+        mode === "PATIENT" ? role === "PATIENT" : role !== "PATIENT",
+      ),
     );
     const hasPrivilegedRole = user?.memberships.some((membership) => PRIVILEGED_ROLES.has(membership.role)) ?? false;
     let matchedMfaCounter: bigint | null = null;
@@ -106,7 +116,7 @@ export class AuthController {
     }
 
     const rawToken = createSessionToken();
-    const expiresAt = new Date(Date.now() + SESSION_DURATION_MS);
+    const expiresAt = new Date(Date.now() + (body.rememberMe ? REMEMBERED_SESSION_DURATION_MS : SESSION_DURATION_MS));
     const userAgent = getHeader(request, "user-agent")?.slice(0, 512) ?? null;
     const session = await this.prisma.$transaction(async (transaction) => {
       if (matchedMfaCounter !== null) {
@@ -138,7 +148,7 @@ export class AuthController {
           action: "auth.login_succeeded",
           resourceType: "session",
           resourceId: created.id,
-          metadata: { membershipCount: user.memberships.length, mfaVerified: user.mfaEnabled } as Prisma.InputJsonObject,
+          metadata: { membershipCount: user.memberships.length, loginMode: mode, mfaVerified: user.mfaEnabled } as Prisma.InputJsonObject,
         },
       });
       await transaction.authRateLimit.deleteMany({ where: { keyHash: { in: keys } } });
@@ -152,7 +162,7 @@ export class AuthController {
     response.setHeader("Set-Cookie", this.createSessionCookie(rawToken, expiresAt));
     return {
       user: { id: user.id, email: user.email, displayName: user.displayName },
-      memberships: user.memberships.map((membership) => ({
+      memberships: user.memberships.filter(({ role }) => mode === "PATIENT" ? role === "PATIENT" : role !== "PATIENT").map((membership) => ({
         id: membership.id,
         role: membership.role,
         department: membership.department,
@@ -164,12 +174,143 @@ export class AuthController {
     };
   }
 
+  @Post("forgot-password")
+  @HttpCode(202)
+  @ApiOperation({ summary: "Request a time-limited, one-use password reset link" })
+  async requestPasswordReset(@Body() body: PasswordResetRequestDto, @Req() request: RequestLike) {
+    if (!this.emailDelivery.isConfigured()) {
+      throw new ServiceUnavailableException({
+        code: "PASSWORD_RECOVERY_NOT_CONFIGURED",
+        message: "Password recovery is not configured. Contact your hospital administrator.",
+      });
+    }
+
+    const email = body.email.trim().toLowerCase();
+    const identifierHash = hashRateLimitKey(`password-reset:${email}`);
+    await this.consumeLoginAttempt([identifierHash]);
+
+    const user = await this.prisma.user.findUnique({
+      where: { email },
+      select: { id: true, status: true, emailVerifiedAt: true },
+    });
+    if (user?.status === "ACTIVE" && user.emailVerifiedAt) {
+      const token = createSessionToken();
+      const tokenHash = hashSessionToken(token);
+      const now = new Date();
+      await this.prisma.$transaction(async (transaction) => {
+        await transaction.passwordResetToken.updateMany({
+          where: { userId: user.id, usedAt: null },
+          data: { usedAt: now },
+        });
+        await transaction.passwordResetToken.create({
+          data: { userId: user.id, tokenHash, expiresAt: new Date(now.getTime() + PASSWORD_RESET_DURATION_MS) },
+        });
+        await transaction.auditEvent.create({
+          data: {
+            actorUserId: user.id,
+            action: "auth.password_reset_requested",
+            resourceType: "password_reset",
+            metadata: { identifierHash } as Prisma.InputJsonObject,
+          },
+        });
+      });
+
+      try {
+        await this.emailDelivery.sendPasswordReset(email, token);
+      } catch {
+        await this.prisma.$transaction([
+          this.prisma.passwordResetToken.updateMany({ where: { tokenHash, usedAt: null }, data: { usedAt: new Date() } }),
+          this.prisma.auditEvent.create({
+            data: {
+              actorUserId: user.id,
+              action: "auth.password_reset_delivery_failed",
+              resourceType: "password_reset",
+              metadata: { identifierHash } as Prisma.InputJsonObject,
+            },
+          }),
+        ]);
+      }
+    }
+
+    return { message: "If the account is eligible, password reset instructions will be sent." };
+  }
+
+  @Post("reset-password")
+  @HttpCode(204)
+  @ApiOperation({ summary: "Consume a one-use password reset token and revoke active sessions" })
+  async resetPassword(@Body() body: PasswordResetDto, @Req() request: RequestLike, @Res({ passthrough: true }) response: ResponseLike) {
+    const tokenHash = hashSessionToken(body.token);
+    await this.consumeLoginAttempt([
+      hashRateLimitKey(`password-reset-token:${tokenHash}`),
+      hashRateLimitKey(`password-reset-ip:${request.ip ?? "unknown"}`),
+    ]);
+    const newPasswordHash = await hashPassword(body.password);
+    const now = new Date();
+
+    try {
+      await this.prisma.$transaction(async (transaction) => {
+        const reset = await transaction.passwordResetToken.findUnique({
+          where: { tokenHash },
+          include: { user: { select: { id: true, status: true, emailVerifiedAt: true } } },
+        });
+        if (!reset || reset.usedAt || reset.expiresAt <= now || reset.user.status !== "ACTIVE" || !reset.user.emailVerifiedAt) {
+          throw authenticationFailure();
+        }
+        const consumed = await transaction.passwordResetToken.updateMany({
+          where: { id: reset.id, usedAt: null, expiresAt: { gt: now } },
+          data: { usedAt: now },
+        });
+        if (consumed.count !== 1) throw authenticationFailure();
+
+        await transaction.user.update({ where: { id: reset.user.id }, data: { passwordHash: newPasswordHash } });
+        await transaction.session.updateMany({
+          where: { userId: reset.user.id, revokedAt: null },
+          data: { revokedAt: now },
+        });
+        await transaction.passwordResetToken.updateMany({
+          where: { userId: reset.user.id, usedAt: null },
+          data: { usedAt: now },
+        });
+        await transaction.auditEvent.create({
+          data: {
+            actorUserId: reset.user.id,
+            action: "auth.password_reset_completed",
+            resourceType: "user",
+            resourceId: reset.user.id,
+          },
+        });
+      });
+    } catch (error) {
+      if (error instanceof UnauthorizedException) throw authenticationFailure();
+      throw error;
+    }
+
+    response.setHeader("Set-Cookie", this.clearSessionCookie());
+    return undefined;
+  }
+
   @Get("me")
   @UseGuards(SessionAuthGuard)
   @ApiCookieAuth("jr-xpert-session")
   @ApiOperation({ summary: "Return the identity attached to the current session" })
-  getCurrentUser(@Req() request: RequestLike) {
-    return { user: request.authSession?.user };
+  async getCurrentUser(@Req() request: RequestLike) {
+    const user = request.authSession!.user;
+    const memberships = await this.prisma.membership.findMany({
+      where: {
+        userId: user.id,
+        status: "ACTIVE",
+        OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }],
+        organization: { status: "ACTIVE" },
+        AND: [{ OR: [{ hospitalId: null }, { hospital: { is: { status: "ACTIVE" } } }] }],
+      },
+      include: {
+        organization: { select: { id: true, name: true, slug: true } },
+        hospital: { select: { id: true, name: true } },
+        branch: { select: { id: true, name: true } },
+      },
+      orderBy: [{ organizationId: "asc" }, { hospitalId: "asc" }, { branchId: "asc" }],
+    });
+    return { user, memberships };
   }
 
   @Post("password")
