@@ -16,7 +16,7 @@
     "api": {
       "root": "apps/api",
       "framework": "nestjs",
-      "entrypoint": "src/main.mts",
+      "entrypoint": "src/main.ts",
       "buildCommand": "npm run build"
     }
   },
