@@ -26,8 +26,16 @@ button:disabled { cursor: not-allowed; opacity: .46; }
 .sidebar { width: 248px; min-height: 100vh; position: fixed; inset: 0 auto 0 0; z-index: 20; display: flex; flex-direction: column; color: #fff; background: linear-gradient(174deg, #073763 0%, #062d4e 56%, #062947 100%); box-shadow: 4px 0 22px #092f4a0b; }
 .sidebar-brand { height: 78px; display: flex; align-items: center; padding: 0 16px; position: relative; }
 .brand-lockup { width: min(226px, 100%); display: inline-flex; align-items: center; line-height: 0; }
-.brand-logo-image { display: block; width: 100%; height: auto; }
-.brand-lockup-compact { width: min(196px, 100%); flex: 1 1 auto; overflow: hidden; border-radius: 7px; background: #fff; }
+.brand-logo-image { display: block; width: 100%; height: auto; overflow: visible; }
+.brand-wordmark-main { fill: #073763; font: 750 48px/1 Arial, sans-serif; letter-spacing: -1.8px; }
+.brand-wordmark-accent { fill: #079da7; font: 750 48px/1 Arial, sans-serif; letter-spacing: -1.8px; }
+.brand-wordmark-subtitle { fill: #496982; font: 400 20px/1 Arial, sans-serif; }
+.brand-wordmark-tagline { fill: #6c8297; font: 400 12px/1 Arial, sans-serif; letter-spacing: 1px; }
+.brand-lockup-inverse .brand-wordmark-main { fill: #f7fbff; }
+.brand-lockup-inverse .brand-wordmark-accent { fill: #35c7ce; }
+.brand-lockup-inverse .brand-wordmark-subtitle { fill: #c6d9e8; }
+.brand-lockup-inverse .brand-wordmark-tagline { fill: #a9c1d4; }
+.brand-lockup-compact { width: min(196px, 100%); flex: 1 1 auto; }
 .brand-lockup-compact .brand-logo-image { width: 100%; height: auto; }
 .site-footer .brand-lockup { width: 174px; }
 .preview-top .brand-lockup-compact { width: 132px; }
