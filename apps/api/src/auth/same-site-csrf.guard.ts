@@ -1,5 +1,5 @@
 import { CanActivate, ExecutionContext, ForbiddenException, Injectable } from "@nestjs/common";
-import { getHeader, RequestLike } from "./auth.types.js";
+import { getHeader, type RequestLike } from "./auth.types.js";
 import { sessionCookieName } from "./session-auth.guard.js";
 
 @Injectable()

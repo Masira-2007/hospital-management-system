@@ -4,9 +4,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "start:dev": "tsx watch src/main.ts",
+    "start:dev": "tsx watch src/main.mts",
     "build": "prisma generate && tsc -p tsconfig.build.json",
-    "start": "node dist/main.js",
+    "start": "node dist/main.mjs",
     "test": "tsx --test test/health.spec.ts test/security.spec.ts test/tenant-membership.spec.ts test/patients.spec.ts test/authentication.spec.ts",
     "db:generate": "prisma generate",
     "db:validate": "prisma validate",

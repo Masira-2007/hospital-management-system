@@ -1,6 +1,6 @@
 import { CanActivate, ExecutionContext, ForbiddenException, Injectable, UnauthorizedException } from "@nestjs/common";
 import { PrismaService } from "../database/prisma.service.js";
-import { getHeader, RequestLike } from "./auth.types.js";
+import { getHeader, type RequestLike } from "./auth.types.js";
 
 @Injectable()
 export class TenantMembershipGuard implements CanActivate {

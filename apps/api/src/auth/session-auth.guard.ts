@@ -1,7 +1,7 @@
 import { CanActivate, ExecutionContext, Injectable, UnauthorizedException } from "@nestjs/common";
 import { PrismaService } from "../database/prisma.service.js";
 import { hashSessionToken } from "../security/security.crypto.js";
-import { getHeader, RequestLike } from "./auth.types.js";
+import { getHeader, type RequestLike } from "./auth.types.js";
 
 const TOKEN_PATTERN = /^[a-f0-9]{64}$/i;
 
