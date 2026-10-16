@@ -47,7 +47,7 @@ export function LoginForm() {
 
   return <main className="auth-page">
     <section className="auth-story" aria-label="JR Xpert HMS information">
-      <Link className="auth-brand" href="/"><BrandMark /></Link>
+      <Link className="auth-brand" href="/site"><BrandMark /></Link>
       <div className="auth-story-copy">
         <span className="auth-eyebrow"><HeartPulse size={15}/> HOSPITAL MANAGEMENT SYSTEM</span>
         <h1>Better care begins with a <em>clearer view.</em></h1>
@@ -93,7 +93,7 @@ export function LoginForm() {
           <button className="auth-submit" type="submit" disabled={busy}>{busy ? <><LoaderCircle size={18} className="auth-spin"/> Signing in…</> : <>Sign in securely <ArrowRight size={18}/></>}</button>
         </form>
         <p className="auth-help">Need access? Contact your hospital administrator.</p>
-        <div className="auth-panel-footer"><Link href="/"><ArrowLeft size={14}/> Back to JR Xpert HMS</Link><span>Better Care. Smarter Management. Healthier Tomorrow.</span></div>
+        <div className="auth-panel-footer"><Link href="/site"><ArrowLeft size={14}/> About JR Xpert HMS</Link><span>Better Care. Smarter Management. Healthier Tomorrow.</span></div>
       </div>
     </section>
   </main>;
@@ -169,5 +169,5 @@ export function ResetPasswordForm() {
 }
 
 function AuthSimpleFrame({ title, description, children }: { title: string; description: string; children: ReactNode }) {
-  return <main className="auth-simple"><Link className="auth-simple-brand" href="/"><BrandMark/></Link><section className="auth-simple-card"><span className="auth-eyebrow"><LockKeyhole size={14}/> ACCOUNT RECOVERY</span><h1>{title}</h1><p>{description}</p>{children}<div className="auth-panel-footer"><Link href="/login"><ArrowLeft size={14}/> Back to sign in</Link><span>JR Xpert HMS</span></div></section></main>;
+  return <main className="auth-simple"><Link className="auth-simple-brand" href="/site"><BrandMark/></Link><section className="auth-simple-card"><span className="auth-eyebrow"><LockKeyhole size={14}/> ACCOUNT RECOVERY</span><h1>{title}</h1><p>{description}</p>{children}<div className="auth-panel-footer"><Link href="/login"><ArrowLeft size={14}/> Back to sign in</Link><span>JR Xpert HMS</span></div></section></main>;
 }
