@@ -3,7 +3,7 @@
 **Company:** JR Xpert
 **Product:** JR Xpert Hospital Management System
 **Tagline:** Better Care. Smarter Management. Healthier Tomorrow.
-**Reference:** User-supplied JR Xpert HMS collage (marketing page, login screen, admin dashboards, patient directory, billing and mobile preview). Use it as visual direction and create original JR Xpert assets.
+**Reference:** User-supplied JR Xpert HMS collage plus the separately supplied JR Xpert HMS logo. Use the collage as visual direction and the supplied logo image as the brand asset.
 
 This document tracks the user-provided master prompt. It is a scope record, not a claim that listed work is implemented. Status: **not started** unless explicitly marked in the increment table. The pasted prompt received by this workspace stops in section 19.E at “Medicine Expiry and St”; its remaining text and later requirements were not present, so they must be added when provided.
 
@@ -12,7 +12,8 @@ This document tracks the user-provided master prompt. It is a scope record, not 
 - Product/company identity: JR Xpert HMS / JR Xpert.
 - Tagline: Better Care. Smarter Management. Healthier Tomorrow.
 - Palette: navy `#073763`, deep navy `#062B49`, teal `#079DA7`, cyan `#14B8D4`, background `#F2F8FC`, white surfaces, primary text `#183A5A`, secondary text `#6C8297`, success `#159B79`, warning `#E8A23B`, error `#D9485F`.
-- Original vector mark combines a medical cross and caregiving symbol. Apply the identity consistently across all user-facing outputs.
+- Use the supplied JR Xpert HMS logo, including its exact mark and wordmark, throughout the web product. The image is cropped from the user's provided source and reused by the shared brand component.
+- Do not display the unsupported “Trusted by 100+ Hospitals” badge or claim.
 - Reusable responsive, accessible design system; light and optional dark themes; keyboard/screen-reader support; loading, empty, error, success and offline states; English, Hindi and Gujarati localization architecture.
 
 ## Product scope and status
@@ -24,10 +25,10 @@ This document tracks the user-provided master prompt. It is a scope record, not 
 | Patient portal | Secure patient access, scheduling, reports, bills, consent and dependents | Not started |
 | Mobile apps | Android/iOS Expo app, secure storage, biometrics, push and offline state | Not started |
 | Super Admin SaaS | Tenant onboarding, subscriptions, usage, system health and support | Not started |
-| Multi-tenant core | Organizations, hospital groups, hospitals, branches, locations, tenant settings and subscriptions | Initial Prisma organization/hospital/branch/membership contract only; isolation not enforced yet |
-| Authentication and identity | Verification, recovery, secure hashing, MFA, sessions, SSO, rate limits and device management | Not started |
-| Permissions and audit | Granular role/attribute access, scope, expiry, revocation, break-glass and reviewable audit | Role names and audit record shape only; enforcement not started |
-| Patient EMR/EHR | Registration, MRN, history, allergies, encounters, medication, notes, results, consent, signatures, amendments and exports | Fictional directory preview only; no patient API or persistent data |
+| Multi-tenant core | Organizations, hospital groups, hospitals, branches, locations, tenant settings and subscriptions | Organization/hospital/branch/membership schema; compound tenant/hospital/branch relations; runtime membership-verified context for patient directory. No PostgreSQL RLS or subscription/tenant onboarding workflows yet |
+| Authentication and identity | Verification, recovery, secure hashing, MFA, sessions, SSO, rate limits and device management | Scrypt password verification, email-verified active-account check, TOTP requirement for privileged roles, 12-hour server-side sessions, password change, session listing/revocation and database login throttling. No enrollment, invitations, verification delivery, recovery, SSO or passkeys |
+| Permissions and audit | Granular role/attribute access, scope, expiry, revocation, break-glass and reviewable audit | Active membership, expiry, organization/hospital/branch scoping and patient-directory role check; auth and patient-directory audit events. No fine-grained clinical ABAC, approvals, break-glass or audit review interface |
+| Patient EMR/EHR | Registration, MRN, history, allergies, encounters, medication, notes, results, consent, signatures, amendments and exports | Tenant-scoped, paginated patient-directory read API only. The web directory remains fictional preview data; no clinical record writes or EMR/EHR workflows |
 | Appointments and queues | Availability, booking, conflict prevention, walk-ins, tokens, queue, reminders and no-shows | Fictional schedule preview only; no booking API |
 | Doctor/nurse workflow | Clinical documentation, medication administration, observations, handover and escalation | Not started |
 | OPD/IPD/ICU/OT/emergency | Admissions, beds, transfers, triage, surgery, discharge coordination and ambulance | Not started |
@@ -39,15 +40,15 @@ This document tracks the user-provided master prompt. It is a scope record, not 
 | HR and payroll | Staff, credentials, shifts, attendance, leave and jurisdiction-configured payroll | Not started |
 | Communication | Telemedicine, notifications, reminders and patient support | Not started |
 | AI/operations intelligence | Approved-data assistant and operational workflows with human review | Not started; prompt content is truncated during section 19.E |
-| Integrations and API | Versioned REST/OpenAPI, realtime, gateways, analyzers, PACS, insurer and accounting adapters | Health endpoint and OpenAPI shell only |
+| Integrations and API | Versioned REST/OpenAPI, realtime, gateways, analyzers, PACS, insurer and accounting adapters | Versioned NestJS health/auth/session/patient-directory endpoints; OpenAPI available only outside production. No external service adapters or API-to-web integration |
 | Infrastructure | PostgreSQL, Prisma migrations, Redis/jobs, private S3-compatible files, Docker, CI/CD, monitoring, backup and environments | Compose foundation for PostgreSQL/Redis; no production operations |
-| Quality and documentation | Unit, integration, API, end-to-end, threat/privacy review and deployment guides | One API liveness test; no clinical/security certification |
+| Quality and documentation | Unit, integration, API, end-to-end, threat/privacy review and deployment guides | API liveness, password/session/TOTP primitive and tenant-guard unit tests; schema validation/build instructions. No production database integration, end-to-end suite, threat/privacy review or clinical/security certification |
 
 ## Required architecture and product constraints
 
 - Prefer a modular monolith with clean domain boundaries and an option to separate high-load modules later.
 - Intended stack: Next.js, React and TypeScript; Tailwind CSS and reusable accessible components; NestJS/TypeScript; PostgreSQL with Prisma; Redis and a reliable job queue; versioned REST/OpenAPI; realtime only where appropriate; React Native/Expo; private S3-compatible object storage; Docker and separate development, staging and production environments.
-- Never authorize a tenant by trusting a client-supplied tenant ID. Resolve tenant context from authenticated membership and enforce it through every data-access path; assess PostgreSQL row-level security as defense in depth.
+- Never authorize a tenant by trusting a client-supplied tenant ID. Resolve tenant context from authenticated membership and enforce it through every data-access path; assess PostgreSQL row-level security as defense in depth. The current directory endpoint applies scoped queries; RLS is not configured.
 - Platform Super Admin must not automatically receive access to patient records. Any emergency access/impersonation requires explicit purpose, time limits, disclosure, audit and alerting.
 - Do not silently overwrite signed clinical records. Preserve authorship, signatures, timestamps, amendments and history.
 - Verify payments server-side and provider webhooks cryptographically; use idempotency; distinguish payment, capture, settlement, refund and reconciliation. Do not store raw card data. Manual payments remain explicitly offline and auditable.
@@ -56,11 +57,19 @@ This document tracks the user-provided master prompt. It is a scope record, not 
 
 ## Increment history
 
+### 0.2.0 — Security and identity foundation
+
+- Replaced the generated brand mark with the exact user-supplied JR Xpert HMS logo across the shared web brand component; removed the sidebar's prior generated branding treatment.
+- Confirmed the source app had no “Trusted by 100+ Hospitals” claim; the user-provided badge is not included in the app.
+- Added secure server-managed session authentication with scrypt password hashes, privileged-role MFA/TOTP enforcement, login throttling, password rotation, device/session revocation and audit records.
+- Added tenant/hospital/branch membership validation and a limited, audited patient-directory endpoint with scoped queries and selected fields.
+- Added database migrations, security configuration checks and targeted tests. Production deployment still requires database, key provisioning, API hosting and an independent security review.
+
 ### 0.1.0 — Foundation preview
 
 - Added branded responsive dashboard, synthetic patient directory and appointment views, and planned-module placeholders.
 - Added a public marketing page introducing JR Xpert HMS and linking to the explicitly labeled workspace preview.
 - Added Next.js/React web workspace and Tailwind CSS pipeline.
-- Added a NestJS API shell with `/api/v1/health`, OpenAPI UI and one liveness test.
+- Added the initial NestJS API shell with `/api/v1/health`, OpenAPI UI and one liveness test.
 - Added initial Prisma/PostgreSQL domain contract and local PostgreSQL/Redis Compose services.
-- No production readiness claim. Authentication, data access, tenant enforcement and live integrations remain unimplemented.
+- No production readiness claim. Full patient EMR, appointment, pharmacy, laboratory, financial, insurance, HR, mobile and live integrations remain unimplemented.

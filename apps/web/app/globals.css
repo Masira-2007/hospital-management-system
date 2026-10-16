@@ -24,18 +24,13 @@ button:focus-visible, input:focus-visible { outline: 3px solid #14b8d477; outlin
 button:disabled { cursor: not-allowed; opacity: .46; }
 .app-shell { min-height: 100vh; }
 .sidebar { width: 248px; min-height: 100vh; position: fixed; inset: 0 auto 0 0; z-index: 20; display: flex; flex-direction: column; color: #fff; background: linear-gradient(174deg, #073763 0%, #062d4e 56%, #062947 100%); box-shadow: 4px 0 22px #092f4a0b; }
-.sidebar-brand { height: 78px; display: flex; align-items: center; padding: 0 21px; position: relative; }
-.brand-lockup { display: flex; align-items: center; gap: 10px; color: var(--teal); }
-.brand-symbol { width: 40px; height: 40px; flex: 0 0 auto; }
-.brand-copy { display: flex; flex-direction: column; line-height: 1.1; }
-.brand-name { font-size: 20px; letter-spacing: -.75px; font-weight: 760; color: var(--navy); white-space: nowrap; }
-.brand-name > span { color: var(--teal); }
-.brand-subtitle { margin-top: 4px; color: var(--muted); font-size: 10px; letter-spacing: .1px; }
-.brand-lockup-compact { gap: 8px; color: #2fd1c0; }
-.brand-lockup-compact .brand-symbol { width: 32px; height: 32px; }
-.brand-lockup-compact .brand-name { font-size: 17px; color: white; letter-spacing: -.5px; }
-.brand-lockup-compact .brand-name > span { color: #58d5d3; }
-.sidebar-brand-tag { position: absolute; bottom: 8px; left: 62px; color: #87a7bf; font-size: 8px; font-weight: 750; letter-spacing: 1.1px; }
+.sidebar-brand { height: 78px; display: flex; align-items: center; padding: 0 16px; position: relative; }
+.brand-lockup { width: min(226px, 100%); display: inline-flex; align-items: center; line-height: 0; }
+.brand-logo-image { display: block; width: 100%; height: auto; }
+.brand-lockup-compact { width: min(196px, 100%); flex: 1 1 auto; overflow: hidden; border-radius: 7px; background: #fff; }
+.brand-lockup-compact .brand-logo-image { width: 100%; height: auto; }
+.site-footer .brand-lockup { width: 174px; }
+.preview-top .brand-lockup-compact { width: 132px; }
 .icon-button { display: inline-grid; place-items: center; width: 34px; height: 34px; padding: 0; border: 0; border-radius: 9px; background: transparent; color: #8194a8; cursor: pointer; transition: color .15s, background .15s; }
 .icon-button:hover { background: #edf5f8; color: var(--navy); }
 .sidebar .icon-button { color: #8ba6bb; }

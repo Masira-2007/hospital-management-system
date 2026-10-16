@@ -102,6 +102,7 @@ model Branch {
   appointments Appointment[]
 
   @@unique([hospitalId, code])
+  @@unique([id, hospitalId])
   @@index([hospitalId])
 }
 
@@ -115,10 +116,13 @@ model User {
   emailVerifiedAt DateTime?
   phoneVerifiedAt DateTime?
   mfaEnabled      Boolean      @default(false)
+  mfaSecretEncrypted String?
+  mfaLastUsedCounter BigInt?
   createdAt       DateTime     @default(now())
   updatedAt       DateTime     @updatedAt
   memberships     Membership[]
   auditEvents     AuditEvent[]
+  sessions        Session[]
 
   @@index([status])
 }
@@ -137,7 +141,7 @@ model Membership {
   user           User           @relation(fields: [userId], references: [id], onDelete: Restrict)
   organization   Organization  @relation(fields: [organizationId], references: [id], onDelete: Restrict)
   hospital       Hospital?      @relation(fields: [hospitalId, organizationId], references: [id, organizationId], onDelete: Restrict)
-  branch         Branch?        @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  branch         Branch?        @relation(fields: [branchId, hospitalId], references: [id, hospitalId], onDelete: Restrict)
   appointments   Appointment[]  @relation("AppointmentDoctor")
 
   @@unique([userId, organizationId, hospitalId, branchId, role])
@@ -161,7 +165,7 @@ model Patient {
   updatedAt      DateTime      @updatedAt
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
   hospital       Hospital     @relation(fields: [hospitalId, organizationId], references: [id, organizationId], onDelete: Restrict)
-  branch         Branch?      @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  branch         Branch?      @relation(fields: [branchId, hospitalId], references: [id, hospitalId], onDelete: Restrict)
   appointments   Appointment[]
 
   @@unique([organizationId, mrn])
@@ -185,7 +189,7 @@ model Appointment {
   updatedAt             DateTime          @updatedAt
   organization          Organization     @relation(fields: [organizationId], references: [id], onDelete: Restrict)
   hospital              Hospital         @relation(fields: [hospitalId, organizationId], references: [id, organizationId], onDelete: Restrict)
-  branch                Branch?          @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  branch                Branch?          @relation(fields: [branchId, hospitalId], references: [id, hospitalId], onDelete: Restrict)
   patient               Patient          @relation(fields: [patientId, organizationId], references: [id, organizationId], onDelete: Restrict)
   doctor                Membership       @relation("AppointmentDoctor", fields: [doctorMembershipId, organizationId], references: [id, organizationId], onDelete: Restrict)
 
@@ -209,4 +213,27 @@ model AuditEvent {
 
   @@index([organizationId, createdAt])
   @@index([actorUserId, createdAt])
+}
+
+model Session {
+  id        String    @id @default(cuid())
+  userId    String
+  tokenHash String    @unique
+  userAgent String?
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime  @default(now())
+  lastUsedAt DateTime?
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, expiresAt])
+}
+
+model AuthRateLimit {
+  keyHash         String   @id
+  failedAttempts  Int      @default(0)
+  windowStartedAt DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([updatedAt])
 }
