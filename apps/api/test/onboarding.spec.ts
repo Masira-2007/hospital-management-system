@@ -59,6 +59,58 @@ test("invitation setup rejects an unsent or revoked invitation before creating a
   assert.equal(userCreated, false);
 });
 
+test("hospital invitation setup link cannot prepare the account twice", async () => {
+  let transactions = 0;
+  const prisma = {
+    $queryRaw: async () => [{ failedAttempts: 1 }],
+    hospitalInvitation: { findUnique: async () => ({
+      id: "invite-1", organizationId: "org-1", hospitalId: "hospital-1", intendedEmail: "admin@example.test", role: "HOSPITAL_ADMIN",
+      status: "PENDING", deliveryStatus: "SENT", expiresAt: new Date(Date.now() + 60_000), preparedAt: new Date(), hospital: { status: "PROVISIONING" },
+    }) },
+    $transaction: async () => { transactions += 1; },
+  };
+  const controller = new HospitalInvitationsController(prisma as never);
+  await assert.rejects(() => controller.prepare({ token: "d".repeat(64), displayName: "Admin", password: "a strong password 928!" }, request), (error: unknown) => error instanceof BadRequestException);
+  assert.equal(transactions, 0);
+});
+
+test("concurrent hospital invitation setup can claim the preparation token only once", async () => {
+  let userCreated = false;
+  let claimWhere: unknown;
+  const expiresAt = new Date(Date.now() + 60_000);
+  const prisma = {
+    $queryRaw: async () => [{ failedAttempts: 1 }],
+    hospitalInvitation: { findUnique: async () => ({
+      id: "invite-1", organizationId: "org-1", hospitalId: "hospital-1", intendedEmail: "admin@example.test", role: "HOSPITAL_ADMIN",
+      status: "PENDING", deliveryStatus: "SENT", expiresAt, preparedAt: null, hospital: { status: "PROVISIONING" },
+    }) },
+    user: { findUnique: async () => null },
+    $transaction: async (callback: (transaction: Record<string, unknown>) => Promise<unknown>) => callback({
+      hospitalInvitation: {
+        findUnique: async () => ({ status: "PENDING", deliveryStatus: "SENT", expiresAt, preparedAt: new Date() }),
+        updateMany: async ({ where }: { where: unknown }) => { claimWhere = where; return { count: 0 }; },
+      },
+      user: { create: async () => { userCreated = true; } },
+    }),
+  };
+  const controller = new HospitalInvitationsController(prisma as never);
+  const previousKey = process.env.MFA_ENCRYPTION_KEY;
+  process.env.MFA_ENCRYPTION_KEY = "ab".repeat(32);
+  try {
+    await assert.rejects(() => controller.prepare({ token: "e".repeat(64), displayName: "Admin", password: "a strong password 928!" }, request), (error: unknown) => error instanceof BadRequestException);
+  } finally {
+    if (previousKey === undefined) delete process.env.MFA_ENCRYPTION_KEY;
+    else process.env.MFA_ENCRYPTION_KEY = previousKey;
+  }
+  const claim = claimWhere as { id: string; status: string; deliveryStatus: string; preparedAt: Date | null; expiresAt: { gt: Date } };
+  assert.equal(claim.id, "invite-1");
+  assert.equal(claim.status, "PENDING");
+  assert.equal(claim.deliveryStatus, "SENT");
+  assert.equal(claim.preparedAt, null);
+  assert.ok(claim.expiresAt.gt instanceof Date);
+  assert.equal(userCreated, false);
+});
+
 test("first platform admin cannot be activated without a valid MFA code", async () => {
   let mutations = 0;
   const prisma = {
@@ -73,6 +125,53 @@ test("first platform admin cannot be activated without a valid MFA code", async 
   const controller = new PlatformBootstrapController(prisma as never);
   await assert.rejects(() => controller.complete({ token: "c".repeat(64), mfaCode: "123456" }, request), (error: unknown) => error instanceof ForbiddenException);
   assert.equal(mutations, 0);
+});
+
+test("first platform admin bootstrap setup link cannot be prepared twice", async () => {
+  let transactions = 0;
+  const prisma = {
+    $queryRaw: async () => [{ failedAttempts: 1 }],
+    platformBootstrapToken: { findUnique: async () => ({
+      id: "bootstrap-1", userId: "admin-1", tokenHash: hashSessionToken("f".repeat(64)), expiresAt: new Date(Date.now() + 60_000), preparedAt: new Date(), usedAt: null,
+      user: { id: "admin-1", email: "admin@example.test", status: "INVITED", mfaEnabled: false },
+    }) },
+    $transaction: async () => { transactions += 1; },
+  };
+  const controller = new PlatformBootstrapController(prisma as never);
+  await assert.rejects(() => controller.prepare({ token: "f".repeat(64), displayName: "Platform Admin", password: "a strong password 928!" }, request), (error: unknown) => error instanceof BadRequestException);
+  assert.equal(transactions, 0);
+});
+
+test("concurrent first-admin setup can claim its preparation token only once", async () => {
+  let userUpdated = false;
+  let claimWhere: unknown;
+  const prisma = {
+    $queryRaw: async () => [{ failedAttempts: 1 }],
+    platformBootstrapToken: { findUnique: async () => ({
+      id: "bootstrap-1", userId: "admin-1", tokenHash: hashSessionToken("g".repeat(64)), expiresAt: new Date(Date.now() + 60_000), preparedAt: null, usedAt: null,
+      user: { id: "admin-1", email: "admin@example.test", status: "INVITED", mfaEnabled: false },
+    }) },
+    membership: { findFirst: async () => ({ id: "membership-1", organizationId: "org-platform" }) },
+    $transaction: async (callback: (transaction: Record<string, unknown>) => Promise<unknown>) => callback({
+      platformBootstrapToken: { updateMany: async ({ where }: { where: unknown }) => { claimWhere = where; return { count: 0 }; } },
+      user: { update: async () => { userUpdated = true; } },
+    }),
+  };
+  const controller = new PlatformBootstrapController(prisma as never);
+  const previousKey = process.env.MFA_ENCRYPTION_KEY;
+  process.env.MFA_ENCRYPTION_KEY = "cd".repeat(32);
+  try {
+    await assert.rejects(() => controller.prepare({ token: "g".repeat(64), displayName: "Platform Admin", password: "a strong password 928!" }, request), (error: unknown) => error instanceof BadRequestException);
+  } finally {
+    if (previousKey === undefined) delete process.env.MFA_ENCRYPTION_KEY;
+    else process.env.MFA_ENCRYPTION_KEY = previousKey;
+  }
+  const claim = claimWhere as { id: string; usedAt: Date | null; preparedAt: Date | null; expiresAt: { gt: Date } };
+  assert.equal(claim.id, "bootstrap-1");
+  assert.equal(claim.usedAt, null);
+  assert.equal(claim.preparedAt, null);
+  assert.ok(claim.expiresAt.gt instanceof Date);
+  assert.equal(userUpdated, false);
 });
 
 test("platform routes require MFA and an active platform-scoped administrator membership", async () => {

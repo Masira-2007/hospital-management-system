@@ -34,7 +34,7 @@ export class HospitalInvitationsController {
         deliveryStatus: true, expiresAt: true, preparedAt: true, hospital: { select: { status: true } },
       },
     });
-    if (!invitation || invitation.status !== "PENDING" || invitation.deliveryStatus !== "SENT" || invitation.expiresAt <= now || invitation.hospital.status !== "PROVISIONING" || invitation.role !== "HOSPITAL_ADMIN") {
+    if (!invitation || invitation.status !== "PENDING" || invitation.deliveryStatus !== "SENT" || invitation.preparedAt || invitation.expiresAt <= now || invitation.hospital.status !== "PROVISIONING" || invitation.role !== "HOSPITAL_ADMIN") {
       throw invalidInvitation();
     }
 
@@ -63,6 +63,11 @@ export class HospitalInvitationsController {
       if (!current || current.status !== "PENDING" || current.deliveryStatus !== "SENT" || current.expiresAt <= now) {
         throw invalidInvitation();
       }
+      const claimed = await transaction.hospitalInvitation.updateMany({
+        where: { id: invitation.id, status: "PENDING", deliveryStatus: "SENT", preparedAt: null, expiresAt: { gt: now } },
+        data: { preparedAt: now },
+      });
+      if (claimed.count !== 1) throw invalidInvitation();
 
       const user = existing
         ? await transaction.user.update({
@@ -88,7 +93,7 @@ export class HospitalInvitationsController {
         });
       }
 
-      await transaction.hospitalInvitation.update({ where: { id: invitation.id }, data: { preparedAt: now, preparedUserId: user.id } });
+      await transaction.hospitalInvitation.update({ where: { id: invitation.id }, data: { preparedUserId: user.id } });
       await transaction.auditEvent.create({
         data: {
           organizationId: invitation.organizationId,

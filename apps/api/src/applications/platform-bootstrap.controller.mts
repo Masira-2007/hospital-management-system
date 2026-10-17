@@ -30,7 +30,7 @@ export class PlatformBootstrapController {
       where: { tokenHash },
       include: { user: { select: { id: true, email: true, status: true, mfaEnabled: true } } },
     });
-    if (!record || record.usedAt || record.expiresAt <= now || record.user.status !== "INVITED" || record.user.mfaEnabled) throw invalidSetup();
+    if (!record || record.usedAt || record.preparedAt || record.expiresAt <= now || record.user.status !== "INVITED" || record.user.mfaEnabled) throw invalidSetup();
     const membership = await this.prisma.membership.findFirst({
       where: { userId: record.userId, role: "SUPER_ADMIN", hospitalId: null, branchId: null, status: "INVITED", organization: { status: "ACTIVE" } },
       select: { id: true, organizationId: true },
@@ -42,7 +42,7 @@ export class PlatformBootstrapController {
     const passwordHash = await hashPassword(body.password);
     await this.prisma.$transaction(async (transaction) => {
       const valid = await transaction.platformBootstrapToken.updateMany({
-        where: { id: record.id, usedAt: null, expiresAt: { gt: now } },
+        where: { id: record.id, usedAt: null, preparedAt: null, expiresAt: { gt: now } },
         data: { preparedAt: now },
       });
       if (valid.count !== 1) throw invalidSetup();
