@@ -1,6 +1,6 @@
 import { BadRequestException, Body, Controller, HttpCode, Post, Req, ServiceUnavailableException } from "@nestjs/common";
 import { ApiOperation, ApiTags } from "@nestjs/swagger";
-import type { Prisma } from "../generated/prisma/client.cjs";
+import type { Prisma } from "@prisma/client";
 import { PrismaService } from "../database/prisma.service.mjs";
 import { getHeader, type RequestLike } from "../auth/auth.types.mjs";
 import { EmailDeliveryService } from "../auth/email-delivery.service.mjs";
