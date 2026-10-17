@@ -8,6 +8,7 @@ import { EmailDeliveryService } from "../auth/email-delivery.service.mjs";
 import type { RequestLike } from "../auth/auth.types.mjs";
 import { createSessionToken, hashSessionToken } from "../security/security.crypto.mjs";
 import { ApplicationDecisionDto, HospitalApplicationQueryDto } from "./hospital-application.dto.mjs";
+import { HospitalStatusChangeDto, PlatformHospitalQueryDto } from "./platform-hospital.dto.mjs";
 
 const INVITATION_LIFETIME_MS = 72 * 60 * 60 * 1000;
 
@@ -33,6 +34,80 @@ export class PlatformController {
       invitations: invitations.map(({ status, deliveryStatus, _count }) => ({ status, deliveryStatus, count: _count._all })),
       activeUsers,
     };
+  }
+
+  @Get("hospitals")
+  @ApiOperation({ summary: "List hospital-level platform metadata without patient records" })
+  async listHospitals(@Query() query: PlatformHospitalQueryDto) {
+    const search = query.search?.trim();
+    const where: Prisma.HospitalWhereInput = {
+      ...(query.status ? { status: query.status } : {}),
+      ...(search ? {
+        OR: [
+          { name: { contains: search, mode: "insensitive" } },
+          { slug: { contains: search, mode: "insensitive" } },
+          { organization: { is: { name: { contains: search, mode: "insensitive" } } } },
+        ],
+      } : {}),
+    };
+    const skip = (query.page - 1) * query.pageSize;
+    const [total, hospitals] = await Promise.all([
+      this.prisma.hospital.count({ where }),
+      this.prisma.hospital.findMany({
+        where,
+        orderBy: [{ createdAt: "desc" }, { id: "asc" }],
+        skip,
+        take: query.pageSize,
+        select: {
+          id: true, name: true, slug: true, status: true, createdAt: true,
+          organization: { select: { id: true, name: true, status: true } },
+          _count: { select: { branches: true, memberships: true } },
+          subscriptions: {
+            orderBy: { createdAt: "desc" }, take: 1,
+            select: { status: true, currentPeriodEnd: true, plan: { select: { code: true, name: true } } },
+          },
+        },
+      }),
+    ]);
+    return { hospitals, pagination: { page: query.page, pageSize: query.pageSize, total, pages: Math.ceil(total / query.pageSize) } };
+  }
+
+  @Post("hospitals/:hospitalId/status")
+  @ApiOperation({ summary: "Suspend or reactivate a hospital with a required reason and audit event" })
+  async changeHospitalStatus(@Param("hospitalId") hospitalId: string, @Body() body: HospitalStatusChangeDto, @Req() request: RequestLike) {
+    const reason = body.reason.trim();
+    if (reason.length < 10) throw new BadRequestException("Provide a clear reason of at least 10 characters.");
+    const targetStatus = body.action === "SUSPEND" ? "SUSPENDED" : "ACTIVE";
+
+    return this.prisma.$transaction(async (transaction) => {
+      const current = await transaction.hospital.findUnique({
+        where: { id: hospitalId },
+        select: { id: true, organizationId: true, name: true, status: true },
+      });
+      if (!current) throw new NotFoundException("Hospital not found.");
+      if (current.status === targetStatus) return { hospital: { id: current.id, name: current.name, status: current.status }, changed: false };
+      if (current.status !== "ACTIVE" && current.status !== "SUSPENDED") {
+        throw new ConflictException("Only active or suspended hospitals can change status.");
+      }
+
+      const changed = await transaction.hospital.updateMany({
+        where: { id: current.id, status: current.status },
+        data: { status: targetStatus },
+      });
+      if (changed.count !== 1) throw new ConflictException("Hospital status changed concurrently. Refresh and try again.");
+      await transaction.auditEvent.create({
+        data: {
+          actorUserId: request.authSession!.user.id,
+          organizationId: current.organizationId,
+          action: body.action === "SUSPEND" ? "hospital.suspended" : "hospital.reactivated",
+          resourceType: "hospital",
+          resourceId: current.id,
+          reason,
+          metadata: { from: current.status, to: targetStatus } as Prisma.InputJsonObject,
+        },
+      });
+      return { hospital: { id: current.id, name: current.name, status: targetStatus }, changed: true };
+    });
   }
 
   @Get("applications")

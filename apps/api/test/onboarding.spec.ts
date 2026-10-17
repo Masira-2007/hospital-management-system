@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
-import { BadRequestException, ForbiddenException, ServiceUnavailableException } from "@nestjs/common";
+import { BadRequestException, ConflictException, ForbiddenException, ServiceUnavailableException } from "@nestjs/common";
 import { test } from "node:test";
 import { HospitalApplicationsController } from "../src/applications/hospital-applications.controller.mjs";
 import { HospitalInvitationsController } from "../src/applications/hospital-invitations.controller.mjs";
 import { PlatformBootstrapController } from "../src/applications/platform-bootstrap.controller.mjs";
+import { PlatformController } from "../src/applications/platform.controller.mjs";
+import { PlatformHospitalQueryDto } from "../src/applications/platform-hospital.dto.mjs";
 import { SuperAdminGuard } from "../src/auth/super-admin.guard.mjs";
 import { hashSessionToken } from "../src/security/security.crypto.mjs";
 
@@ -80,4 +82,67 @@ test("platform routes require MFA and an active platform-scoped administrator me
   } as never);
   const context = { switchToHttp: () => ({ getRequest: () => ({ authSession: { user: { id: "user-1" } } }) }) } as never;
   await assert.rejects(() => guard.canActivate(context), (error: unknown) => error instanceof ForbiddenException);
+});
+
+test("hospital suspension is audited and repeated requests are idempotent", async () => {
+  let status = "ACTIVE";
+  let auditCount = 0;
+  const prisma = {
+    $transaction: async (callback: (transaction: Record<string, unknown>) => Promise<unknown>) => callback({
+      hospital: {
+        findUnique: async () => ({ id: "hospital-1", organizationId: "org-1", name: "Example Hospital", status }),
+        updateMany: async ({ data }: { data: { status: string } }) => { status = data.status; return { count: 1 }; },
+      },
+      auditEvent: { create: async () => { auditCount += 1; } },
+    }),
+  };
+  const controller = new PlatformController(prisma as never, {} as never);
+  const request = { authSession: { user: { id: "admin-1" } } } as never;
+  const first = await controller.changeHospitalStatus("hospital-1", { action: "SUSPEND", reason: "Security review requires temporary suspension." }, request);
+  const repeated = await controller.changeHospitalStatus("hospital-1", { action: "SUSPEND", reason: "Security review requires temporary suspension." }, request);
+  assert.deepEqual(first, { hospital: { id: "hospital-1", name: "Example Hospital", status: "SUSPENDED" }, changed: true });
+  assert.deepEqual(repeated, { hospital: { id: "hospital-1", name: "Example Hospital", status: "SUSPENDED" }, changed: false });
+  assert.equal(auditCount, 1, "idempotent retry does not create duplicate audit events");
+});
+
+test("provisioning hospitals cannot be suspended or reactivated from the platform status route", async () => {
+  let auditCount = 0;
+  const prisma = {
+    $transaction: async (callback: (transaction: Record<string, unknown>) => Promise<unknown>) => callback({
+      hospital: { findUnique: async () => ({ id: "hospital-1", organizationId: "org-1", name: "Example Hospital", status: "PROVISIONING" }) },
+      auditEvent: { create: async () => { auditCount += 1; } },
+    }),
+  };
+  const controller = new PlatformController(prisma as never, {} as never);
+  await assert.rejects(
+    () => controller.changeHospitalStatus("hospital-1", { action: "SUSPEND", reason: "Security review requires temporary suspension." }, { authSession: { user: { id: "admin-1" } } } as never),
+    (error: unknown) => error instanceof ConflictException,
+  );
+  assert.equal(auditCount, 0);
+});
+
+test("platform hospital search is paginated and returns only operational metadata", async () => {
+  let findArgs: Record<string, unknown> | undefined;
+  let countWhere: unknown;
+  const hospital = {
+    id: "hospital-1", name: "North Clinic", slug: "north-clinic", status: "ACTIVE", createdAt: new Date(0),
+    organization: { id: "org-1", name: "North Health", status: "ACTIVE" },
+    _count: { branches: 2, memberships: 7 },
+    subscriptions: [],
+  };
+  const prisma = {
+    hospital: {
+      count: async ({ where }: { where: unknown }) => { countWhere = where; return 1; },
+      findMany: async (args: Record<string, unknown>) => { findArgs = args; return [hospital]; },
+    },
+  };
+  const query = Object.assign(new PlatformHospitalQueryDto(), { page: 2, pageSize: 20, search: " North ", status: "ACTIVE" as const });
+  const result = await new PlatformController(prisma as never, {} as never).listHospitals(query);
+  assert.equal((findArgs?.skip), 20);
+  assert.equal((findArgs?.take), 20);
+  assert.deepEqual(countWhere, findArgs?.where);
+  assert.equal(result.pagination.total, 1);
+  assert.equal(result.pagination.pages, 1);
+  assert.equal(result.hospitals[0].name, "North Clinic");
+  assert.equal("patients" in result.hospitals[0], false);
 });

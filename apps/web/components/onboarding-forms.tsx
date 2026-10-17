@@ -7,6 +7,12 @@ import { ArrowRight, BadgeCheck, Building2, Eye, EyeOff, HeartPulse, LockKeyhole
 import { BrandMark } from "@/components/brand-mark";
 
 type ApiResult = { message?: string; authenticatorSecret?: string; authenticatorUri?: string; nextStep?: string };
+type PlatformHospital = {
+  id: string; name: string; slug: string; status: string; createdAt: string;
+  organization: { id: string; name: string; status: string };
+  _count: { branches: number; memberships: number };
+  subscriptions: Array<{ status: string; currentPeriodEnd: string; plan: { code: string; name: string } }>;
+};
 
 const initialApplication = {
   hospitalName: "", hospitalType: "GENERAL", officialEmail: "", contactPhone: "", website: "", streetAddress: "",
@@ -195,8 +201,11 @@ export function InvitationSetupForm({ platform = false }: { platform?: boolean }
 export function PlatformDashboard({ identity }: { identity: { name: string; email: string } }) {
   const router = useRouter();
   const [applications, setApplications] = useState<Array<Record<string, unknown>>>([]);
+  const [hospitals, setHospitals] = useState<PlatformHospital[]>([]);
   const [summary, setSummary] = useState<Record<string, unknown> | null>(null);
   const [selectedStatus, setSelectedStatus] = useState("PENDING_REVIEW");
+  const [hospitalStatus, setHospitalStatus] = useState("");
+  const [hospitalSearch, setHospitalSearch] = useState("");
   const [busyId, setBusyId] = useState("");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -208,15 +217,20 @@ export function PlatformDashboard({ identity }: { identity: { name: string; emai
         fetch("/api/v1/platform/dashboard", { cache: "no-store" }),
         fetch(`/api/v1/platform/applications?status=${encodeURIComponent(selectedStatus)}`, { cache: "no-store" }),
       ]);
-      if (overview.status === 401 || applicationList.status === 401) { router.replace("/super-admin/login"); return; }
-      if (!overview.ok || !applicationList.ok) throw new Error("The secure platform service could not load the dashboard.");
+      const hospitalParams = new URLSearchParams({ page: "1", pageSize: "50" });
+      if (hospitalStatus) hospitalParams.set("status", hospitalStatus);
+      if (hospitalSearch.trim()) hospitalParams.set("search", hospitalSearch.trim());
+      const hospitalList = await fetch(`/api/v1/platform/hospitals?${hospitalParams}`, { cache: "no-store" });
+      if (overview.status === 401 || applicationList.status === 401 || hospitalList.status === 401) { router.replace("/super-admin/login"); return; }
+      if (!overview.ok || !applicationList.ok || !hospitalList.ok) throw new Error("The secure platform service could not load the dashboard.");
       const data = await overview.json() as Record<string, unknown>;
       const list = await applicationList.json() as { applications?: Array<Record<string, unknown>> };
-      setSummary(data); setApplications(list.applications ?? []);
+      const hospitalData = await hospitalList.json() as { hospitals?: PlatformHospital[] };
+      setSummary(data); setApplications(list.applications ?? []); setHospitals(hospitalData.hospitals ?? []);
     } catch (reason) { setError(reason instanceof Error ? reason.message : "Dashboard unavailable."); }
   }
 
-  useEffect(() => { void load(); }, [selectedStatus]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { void load(); }, [selectedStatus, hospitalStatus]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function action(url: string, body: unknown, successText: string) {
     setBusyId(url); setError(""); setNotice("");
@@ -238,6 +252,13 @@ export function PlatformDashboard({ identity }: { identity: { name: string; emai
   return <main className="platform-page"><header className="platform-header"><BrandMark/><div><span>PLATFORM CONTROL</span><strong>{identity.name}</strong><small>{identity.email}</small></div><button onClick={signOut}>Sign out</button></header>
     <section className="platform-main"><div className="platform-welcome"><div><span className="auth-eyebrow"><ShieldCheck size={14}/> SUPER ADMIN</span><h1>Hospital onboarding</h1><p>Review verified applications and provision hospital access. Clinical records are not exposed in this console.</p></div><Link href="/site">JR Xpert site <ArrowRight size={15}/></Link></div>
       <div className="platform-metrics">{metric("Applications awaiting review", (summary?.applications as Record<string, number> | undefined)?.PENDING_REVIEW ?? 0)}{metric("Active hospitals", (summary?.hospitals as Record<string, number> | undefined)?.ACTIVE ?? 0)}{metric("Provisioning hospitals", (summary?.hospitals as Record<string, number> | undefined)?.PROVISIONING ?? 0)}{metric("Active accounts", summary?.activeUsers ?? 0)}</div>
+      <div className="platform-list-heading"><div><h2>Hospitals</h2><p>Manage tenant availability and inspect non-clinical account metadata.</p></div><div className="platform-hospital-tools"><label><span className="sr-only">Search hospitals</span><input aria-label="Search hospitals" placeholder="Search by hospital or organization" value={hospitalSearch} onChange={(event) => setHospitalSearch(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") void load(); }}/></label><select aria-label="Filter hospital status" value={hospitalStatus} onChange={(event) => setHospitalStatus(event.target.value)}><option value="">All statuses</option><option value="ACTIVE">Active</option><option value="SUSPENDED">Suspended</option><option value="PROVISIONING">Provisioning</option><option value="DEACTIVATED">Deactivated</option></select><button type="button" onClick={() => void load()}>Search</button></div></div>
+      {hospitals.length === 0 ? <div className="platform-empty"><Building2 size={25}/><h3>No hospitals found</h3><p>Approved applications will appear here once their administrator completes secure onboarding.</p></div> : <div className="platform-hospital-table-wrap"><table className="platform-hospital-table"><thead><tr><th>HOSPITAL</th><th>ORGANIZATION</th><th>STATUS</th><th>BRANCHES</th><th>MEMBERS</th><th>PLAN</th><th>ACTION</th></tr></thead><tbody>{hospitals.map((hospital) => {
+        const subscription = hospital.subscriptions[0];
+        const canChangeStatus = hospital.status === "ACTIVE" || hospital.status === "SUSPENDED";
+        const actionName = hospital.status === "ACTIVE" ? "SUSPEND" : "REACTIVATE";
+        return <tr key={hospital.id}><td><b>{hospital.name}</b><small>{hospital.slug}</small></td><td>{hospital.organization.name}</td><td><span className={`platform-status status-${hospital.status.toLowerCase()}`}>{hospital.status.replaceAll("_", " ")}</span></td><td>{hospital._count.branches}</td><td>{hospital._count.memberships}</td><td>{subscription ? `${subscription.plan.name} · ${subscription.status.replaceAll("_", " ")}` : "No subscription"}</td><td>{canChangeStatus && <button className={actionName === "SUSPEND" ? "platform-table-danger" : "platform-table-action"} disabled={Boolean(busyId)} onClick={() => { const reason = window.prompt(`${actionName === "SUSPEND" ? "Reason for suspending" : "Reason for reactivating"} ${hospital.name} (at least 10 characters):`); if (reason) void action(`/api/v1/platform/hospitals/${encodeURIComponent(hospital.id)}/status`, { action: actionName, reason }, actionName === "SUSPEND" ? "Hospital suspended." : "Hospital reactivated."); }}>{busyId.includes(hospital.id) ? "Saving…" : actionName === "SUSPEND" ? "Suspend" : "Reactivate"}</button>}</td></tr>;
+      })}</tbody></table></div>}
       <div className="platform-list-heading"><div><h2>Hospital applications</h2><p>Only verified applications appear in review queues.</p></div><select aria-label="Filter application status" value={selectedStatus} onChange={(event) => setSelectedStatus(event.target.value)}><option value="PENDING_REVIEW">Awaiting review</option><option value="NEEDS_INFORMATION">Needs information</option><option value="APPROVED">Approved</option><option value="REJECTED">Rejected</option><option value="EMAIL_PENDING">Email pending</option></select></div>
       {notice && <p className="platform-notice" role="status">{notice}</p>}{error && <p className="onboarding-error" role="alert">{error}</p>}
       {applications.length === 0 ? <div className="platform-empty"><Building2 size={25}/><h3>No applications in this queue</h3><p>Applications will appear here after the official email address is verified.</p></div> : <div className="platform-applications">{applications.map((item) => {
