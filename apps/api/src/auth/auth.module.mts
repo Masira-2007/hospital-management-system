@@ -7,6 +7,6 @@ import { EmailDeliveryService } from "./email-delivery.service.mjs";
 @Module({
   controllers: [AuthController],
   providers: [SessionAuthGuard, TenantMembershipGuard, EmailDeliveryService],
-  exports: [SessionAuthGuard, TenantMembershipGuard],
+  exports: [SessionAuthGuard, TenantMembershipGuard, EmailDeliveryService],
 })
 export class AuthModule {}

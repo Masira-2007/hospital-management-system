@@ -1,4 +1,5 @@
 import {
+  createCipheriv,
   createDecipheriv,
   createHash,
   createHmac,
@@ -58,6 +59,33 @@ export function hashSessionToken(token: string): string {
 
 export function createSessionToken(): string {
   return randomBytes(32).toString("hex");
+}
+
+export function createTotpSecret(): { raw: Buffer; base32: string } {
+  const raw = randomBytes(20);
+  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+  let bits = 0;
+  let value = 0;
+  let base32 = "";
+  for (const byte of raw) {
+    value = (value << 8) | byte;
+    bits += 8;
+    while (bits >= 5) {
+      base32 += alphabet[(value >>> (bits - 5)) & 31];
+      bits -= 5;
+    }
+  }
+  if (bits > 0) base32 += alphabet[(value << (5 - bits)) & 31];
+  return { raw, base32 };
+}
+
+export function encryptTotpSecret(secret: Buffer): string {
+  const keyHex = process.env.MFA_ENCRYPTION_KEY;
+  if (!keyHex || !/^[a-f0-9]{64}$/i.test(keyHex)) throw new Error("MFA_ENCRYPTION_KEY must contain 32 bytes encoded as 64 hexadecimal characters.");
+  const iv = randomBytes(12);
+  const cipher = createCipheriv("aes-256-gcm", Buffer.from(keyHex, "hex"), iv);
+  const ciphertext = Buffer.concat([cipher.update(secret), cipher.final()]);
+  return `${iv.toString("hex")}.${cipher.getAuthTag().toString("hex")}.${ciphertext.toString("hex")}`;
 }
 
 export function hashRateLimitKey(value: string): string {

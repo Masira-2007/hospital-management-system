@@ -6,11 +6,11 @@ import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import Link from "next/link";
 import { BrandMark } from "@/components/brand-mark";
 
-type AuthMode = "HOSPITAL" | "PATIENT";
+type AuthMode = "HOSPITAL" | "PATIENT" | "SUPER_ADMIN";
 
-export function LoginForm() {
+export function LoginForm({ superAdmin = false }: { superAdmin?: boolean }) {
   const router = useRouter();
-  const [mode, setMode] = useState<AuthMode>("HOSPITAL");
+  const [mode, setMode] = useState<AuthMode>(superAdmin ? "SUPER_ADMIN" : "HOSPITAL");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [mfaCode, setMfaCode] = useState("");
@@ -36,7 +36,7 @@ export function LoginForm() {
         setMessage(text || "We couldn’t sign you in. Check your details or contact your hospital administrator.");
         return;
       }
-      router.replace("/workspace");
+      router.replace(mode === "SUPER_ADMIN" ? "/super-admin" : "/workspace");
       router.refresh();
     } catch {
       setMessage("The secure sign-in service could not be reached. Try again later.");
@@ -74,25 +74,25 @@ export function LoginForm() {
       <div className="auth-mobile-brand"><BrandMark compact /></div>
       <div className="auth-panel">
         <div className="auth-panel-brand"><BrandMark /></div>
-        <span className="auth-eyebrow panel-eyebrow"><LockKeyhole size={14}/> SECURE ACCOUNT ACCESS</span>
-        <h2>Welcome back</h2>
-        <p className="auth-subtitle">Sign in to your JR Xpert HMS account.</p>
-        <div className="auth-mode" role="group" aria-label="Choose sign-in type">
+        <span className="auth-eyebrow panel-eyebrow"><LockKeyhole size={14}/> {superAdmin ? "PLATFORM ADMINISTRATOR ACCESS" : "SECURE ACCOUNT ACCESS"}</span>
+        <h2>{superAdmin ? "Administrator sign in" : "Welcome back"}</h2>
+        <p className="auth-subtitle">{superAdmin ? "Use your platform administrator account and authenticator code." : "Sign in to your JR Xpert HMS account."}</p>
+        {!superAdmin && <div className="auth-mode" role="group" aria-label="Choose sign-in type">
           <button type="button" aria-pressed={mode === "HOSPITAL"} className={mode === "HOSPITAL" ? "selected" : ""} onClick={() => { setMode("HOSPITAL"); setMessage(""); }}><Building2 size={16}/> Hospital login</button>
           <button type="button" aria-pressed={mode === "PATIENT"} className={mode === "PATIENT" ? "selected" : ""} onClick={() => { setMode("PATIENT"); setMessage(""); }}><UserRound size={16}/> Patient login</button>
-        </div>
+        </div>}
         <form className="auth-form" onSubmit={submit}>
           <label className="auth-label" htmlFor="login-email">Email address</label>
           <div className="auth-input-wrap"><Mail size={18}/><input id="login-email" name="email" type="email" autoComplete="username" required maxLength={254} value={email} onChange={(event) => setEmail(event.target.value)} placeholder="Enter your email address" /></div>
           <div className="auth-label-row"><label className="auth-label" htmlFor="login-password">Password</label><Link href="/forgot-password">Forgot password?</Link></div>
           <div className="auth-input-wrap"><LockKeyhole size={18}/><input id="login-password" name="password" type={visible ? "text" : "password"} autoComplete="current-password" required minLength={12} maxLength={128} value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Enter your password"/><button className="auth-eye" type="button" onClick={() => setVisible((value) => !value)} aria-label={visible ? "Hide password" : "Show password"}>{visible ? <EyeOff size={18}/> : <Eye size={18}/>}</button></div>
-          <label className="auth-label auth-mfa-label" htmlFor="login-mfa">Authenticator code <span>if required by your hospital</span></label>
-          <div className="auth-input-wrap"><LockKeyhole size={18}/><input id="login-mfa" name="mfaCode" type="text" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} value={mfaCode} onChange={(event) => setMfaCode(event.target.value.replace(/\D/g, ""))} placeholder="6-digit code" /></div>
-          <label className="auth-remember"><input type="checkbox" checked={rememberMe} onChange={(event) => setRememberMe(event.target.checked)}/><span>Remember me on this device</span></label>
+          <label className="auth-label auth-mfa-label" htmlFor="login-mfa">Authenticator code <span>{superAdmin ? "required" : "if enabled for your account"}</span></label>
+          <div className="auth-input-wrap"><LockKeyhole size={18}/><input id="login-mfa" name="mfaCode" type="text" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} required={superAdmin} value={mfaCode} onChange={(event) => setMfaCode(event.target.value.replace(/\D/g, ""))} placeholder="6-digit code" /></div>
+          {!superAdmin && <label className="auth-remember"><input type="checkbox" checked={rememberMe} onChange={(event) => setRememberMe(event.target.checked)}/><span>Remember me on this device</span></label>}
           {message && <p className="auth-message" role="alert">{message}</p>}
           <button className="auth-submit" type="submit" disabled={busy}>{busy ? <><LoaderCircle size={18} className="auth-spin"/> Signing in…</> : <>Sign in securely <ArrowRight size={18}/></>}</button>
         </form>
-        <p className="auth-help">Need access? Contact your hospital administrator.</p>
+        <p className="auth-help">{superAdmin ? "Platform administrator access is invitation-only." : <>Need access? <Link href="/register-hospital">Register a hospital</Link> or contact your administrator.</>}</p>
         <div className="auth-panel-footer"><Link href="/site"><ArrowLeft size={14}/> About JR Xpert HMS</Link><span>Better Care. Smarter Management. Healthier Tomorrow.</span></div>
       </div>
     </section>

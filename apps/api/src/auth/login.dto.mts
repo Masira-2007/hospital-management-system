@@ -11,8 +11,8 @@ export class LoginDto {
   password!: string;
 
   @IsOptional()
-  @IsIn(["HOSPITAL", "PATIENT"])
-  mode?: "HOSPITAL" | "PATIENT";
+  @IsIn(["HOSPITAL", "PATIENT", "SUPER_ADMIN"])
+  mode?: "HOSPITAL" | "PATIENT" | "SUPER_ADMIN";
 
   @IsOptional()
   @IsBoolean()

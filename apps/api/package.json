@@ -8,11 +8,12 @@
     "start:dev": "tsx watch src/main.mts",
     "build": "prisma generate && tsc -p tsconfig.build.json",
     "start": "node dist/main.mjs",
-    "test": "tsx --test test/health.spec.ts test/security.spec.ts test/tenant-membership.spec.ts test/patients.spec.ts test/authentication.spec.ts",
+    "test": "tsx --test test/health.spec.ts test/security.spec.ts test/tenant-membership.spec.ts test/patients.spec.ts test/authentication.spec.ts test/onboarding.spec.ts",
     "db:generate": "prisma generate",
     "db:validate": "prisma validate",
     "db:migrate:dev": "prisma migrate dev",
-    "db:migrate:deploy": "prisma migrate deploy"
+    "db:migrate:deploy": "prisma migrate deploy",
+    "admin:bootstrap": "tsx src/scripts/bootstrap-super-admin.mts"
   },
   "dependencies": {
     "@nestjs/common": "^12.1.3",

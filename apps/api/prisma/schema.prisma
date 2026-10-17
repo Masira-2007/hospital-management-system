@@ -24,6 +24,26 @@ enum TenantStatus {
   DEACTIVATED
 }
 
+enum HospitalApplicationStatus {
+  EMAIL_PENDING
+  PENDING_REVIEW
+  NEEDS_INFORMATION
+  APPROVED
+  REJECTED
+}
+
+enum InvitationStatus {
+  PENDING
+  ACCEPTED
+  REVOKED
+}
+
+enum DeliveryStatus {
+  PENDING
+  SENT
+  FAILED
+}
+
 enum SubscriptionStatus {
   TRIALING
   ACTIVE
@@ -33,6 +53,7 @@ enum SubscriptionStatus {
 }
 
 enum MembershipRole {
+  SUPER_ADMIN
   PLATFORM_ADMIN
   ORGANIZATION_OWNER
   HOSPITAL_ADMIN
@@ -86,6 +107,7 @@ model Organization {
   patients    Patient[]
   appointments Appointment[]
   auditEvents AuditEvent[]
+  invitations HospitalInvitation[]
 }
 
 model Hospital {
@@ -104,10 +126,76 @@ model Hospital {
   appointments   Appointment[]
   settings       HospitalSettings?
   subscriptions  HospitalSubscription[]
+  sourceApplication HospitalApplication? @relation("ApplicationProvisionedHospital")
+  invitations     HospitalInvitation[]
 
   @@unique([organizationId, slug])
   @@unique([id, organizationId])
   @@index([organizationId])
+}
+
+model HospitalApplication {
+  id                       String                    @id @default(cuid())
+  status                   HospitalApplicationStatus @default(EMAIL_PENDING)
+  hospitalName             String
+  hospitalType             String
+  officialEmail            String
+  contactPhone             String
+  website                  String?
+  streetAddress            String
+  city                     String
+  state                    String
+  country                  String
+  postalCode               String
+  bedCount                 Int
+  branchCount              Int
+  representativeName       String
+  representativeDesignation String
+  proposedAdminName        String
+  proposedAdminEmail       String
+  requestedPlanCode        String?
+  termsAcceptedAt          DateTime
+  verificationTokenHash    String?                   @unique
+  verificationExpiresAt    DateTime?
+  emailVerifiedAt          DateTime?
+  reviewedAt               DateTime?
+  reviewedByUserId         String?
+  reviewReason             String?
+  createdHospitalId        String?                   @unique
+  createdAt                DateTime                  @default(now())
+  updatedAt                DateTime                  @updatedAt
+  reviewer                 User?                     @relation("HospitalApplicationReviewer", fields: [reviewedByUserId], references: [id], onDelete: Restrict)
+  createdHospital          Hospital?                 @relation("ApplicationProvisionedHospital", fields: [createdHospitalId], references: [id], onDelete: Restrict)
+
+  @@index([status, createdAt])
+  @@index([officialEmail, status])
+  @@index([proposedAdminEmail, status])
+}
+
+model HospitalInvitation {
+  id              String           @id @default(cuid())
+  organizationId  String
+  hospitalId      String
+  createdByUserId String
+  preparedUserId  String?
+  intendedEmail   String
+  intendedName    String
+  role            MembershipRole   @default(HOSPITAL_ADMIN)
+  tokenHash       String           @unique
+  status          InvitationStatus @default(PENDING)
+  deliveryStatus  DeliveryStatus   @default(PENDING)
+  expiresAt       DateTime
+  preparedAt      DateTime?
+  acceptedAt      DateTime?
+  revokedAt       DateTime?
+  createdAt       DateTime         @default(now())
+  organization    Organization     @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  hospital        Hospital         @relation(fields: [hospitalId, organizationId], references: [id, organizationId], onDelete: Restrict)
+  createdBy       User             @relation("InvitationCreator", fields: [createdByUserId], references: [id], onDelete: Restrict)
+  preparedUser    User?            @relation("InvitationPreparedUser", fields: [preparedUserId], references: [id], onDelete: Restrict)
+
+  @@index([hospitalId, status, expiresAt])
+  @@index([intendedEmail, status])
 }
 
 model Branch {
@@ -147,6 +235,10 @@ model User {
   sessions        Session[]
   passwordResetTokens PasswordResetToken[]
   patientAccessGrants PatientAccessGrant[]
+  reviewedApplications HospitalApplication[] @relation("HospitalApplicationReviewer")
+  createdInvitations HospitalInvitation[] @relation("InvitationCreator")
+  preparedInvitations HospitalInvitation[] @relation("InvitationPreparedUser")
+  platformBootstrapTokens PlatformBootstrapToken[]
 
   @@index([status])
 }
@@ -362,4 +454,17 @@ model AuthRateLimit {
   updatedAt       DateTime @updatedAt
 
   @@index([updatedAt])
+}
+
+model PlatformBootstrapToken {
+  id        String    @id @default(cuid())
+  userId    String
+  tokenHash String    @unique
+  expiresAt DateTime
+  preparedAt DateTime?
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, expiresAt, usedAt])
 }

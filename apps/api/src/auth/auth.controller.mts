@@ -39,6 +39,7 @@ const PASSWORD_RESET_DURATION_MS = 20 * 60 * 1000;
 const RATE_WINDOW_MS = 15 * 60 * 1000;
 const MAX_FAILED_ATTEMPTS = 8;
 const PRIVILEGED_ROLES = new Set([
+  "SUPER_ADMIN",
   "PLATFORM_ADMIN",
   "ORGANIZATION_OWNER",
   "HOSPITAL_ADMIN",
@@ -94,7 +95,11 @@ export class AuthController {
       : false;
     const accountIsValid = Boolean(
       user && user.status === "ACTIVE" && user.emailVerifiedAt && user.memberships.some(({ role }) =>
-        mode === "PATIENT" ? role === "PATIENT" : role !== "PATIENT",
+        mode === "PATIENT"
+          ? role === "PATIENT"
+          : mode === "SUPER_ADMIN"
+            ? role === "SUPER_ADMIN" || role === "PLATFORM_ADMIN"
+            : role !== "PATIENT",
       ),
     );
     const hasPrivilegedRole = user?.memberships.some((membership) => PRIVILEGED_ROLES.has(membership.role)) ?? false;
@@ -162,7 +167,12 @@ export class AuthController {
     response.setHeader("Set-Cookie", this.createSessionCookie(rawToken, expiresAt));
     return {
       user: { id: user.id, email: user.email, displayName: user.displayName },
-      memberships: user.memberships.filter(({ role }) => mode === "PATIENT" ? role === "PATIENT" : role !== "PATIENT").map((membership) => ({
+      memberships: user.memberships.filter(({ role }) => mode === "PATIENT"
+        ? role === "PATIENT"
+        : mode === "SUPER_ADMIN"
+          ? role === "SUPER_ADMIN" || role === "PLATFORM_ADMIN"
+          : role !== "PATIENT",
+      ).map((membership) => ({
         id: membership.id,
         role: membership.role,
         department: membership.department,
