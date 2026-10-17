@@ -15,15 +15,16 @@ JR Xpert HMS is an in-progress, multi-hospital healthcare platform. The public d
 - A first-Super-Admin bootstrap script that sends a one-time email setup link; its preparation token is also single-claim. No default administrator credentials or bootstrap tokens are printed.
 - A protected Super Admin dashboard for hospital onboarding and platform operations, with paginated audit summaries. Patient-directory access trails stay tenant-scoped and audit metadata is not exposed.
 - Multi-hospital schema for organizations, hospitals, branches, memberships, role definitions, permissions, hospital settings, subscriptions, and patient access grants. Hospital status and membership are checked server-side.
-- Patient-directory read endpoint with role-permission lookup, verified tenant membership, a limited field set, bounded search/pagination, access auditing, and transaction-scoped PostgreSQL row-level security for patient and appointment reads.
+- Patient-directory read endpoint with role-permission lookup, verified tenant membership, a limited field set, bounded search/pagination, access auditing, and transaction-scoped PostgreSQL row-level security.
+- Appointment list and requested-booking API with explicit permissions, verified patient/doctor membership, branch-derived scope, audit events, appointment RLS, restricted runtime insert columns, and a database-level clinician overlap constraint. The visible schedule remains a fictional preview and is not wired to these APIs.
 - Append-only audit-event triggers and a database readiness endpoint that returns no connection details.
 - Prisma migrations and safe placeholder environment configuration.
 
 ## Not ready for real patient data
 
-All 7 recorded Neon production migrations, including the platform-audit read grants, were applied successfully on 2026-10-17. The live API readiness endpoint returned `ready` the same day, which verifies that the deployed API can reach its database. It does not verify authenticated workflows, account bootstrap, email delivery, backup restoration, or cross-hospital isolation. Do not enter real patient information until those checks and a security review are complete.
+All 8 recorded Neon production migrations, including appointment RLS and scheduling grants, were applied successfully on 2026-10-17. The live API readiness endpoint returned `ready`; the runtime role is not superuser or `BYPASSRLS`, and appointment RLS is forced. All 42 API unit tests and production builds pass, but this does not verify two-hospital isolation in a non-production database, authenticated end-to-end scheduling, account bootstrap, email delivery, or backup restoration. Do not enter real patient information until those checks and an independent security review are complete.
 
-Other unfinished scope includes patient registration and clinical EMR writes, appointments, nursing/ward/OT workflows, pharmacy, laboratory, billing and payments, insurance, inventory, HR/payroll, mobile apps, notifications beyond account recovery/onboarding, AI workflows, production monitoring/backups, and end-to-end testing against PostgreSQL. This is not a complete HMS or a compliance certification.
+Other unfinished scope includes patient registration and clinical EMR writes, appointment availability/reschedule/cancel/check-in/queues, nursing/ward/OT workflows, pharmacy, laboratory, billing and payments, insurance, inventory, HR/payroll, mobile apps, notifications beyond account recovery/onboarding, AI workflows, production monitoring/backups, and end-to-end testing against PostgreSQL. This is not a complete HMS or a compliance certification.
 
 ## Local development
 
