@@ -1,4 +1,4 @@
-import type { MembershipRole } from "../generated/prisma/client.mjs";
+import type { MembershipRole } from "../generated/prisma/client.cjs";
 
 export interface RequestLike {
   headers: Record<string, string | string[] | undefined>;

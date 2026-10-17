@@ -1,6 +1,6 @@
 import { BadRequestException, Body, ConflictException, Controller, Get, NotFoundException, Param, Post, Query, Req, UseGuards } from "@nestjs/common";
 import { ApiCookieAuth, ApiOperation, ApiTags } from "@nestjs/swagger";
-import type { Prisma } from "../generated/prisma/client.mjs";
+import type { Prisma } from "../generated/prisma/client.cjs";
 import { PrismaService } from "../database/prisma.service.mjs";
 import { SessionAuthGuard } from "../auth/session-auth.guard.mjs";
 import { SuperAdminGuard } from "../auth/super-admin.guard.mjs";

@@ -1,6 +1,6 @@
 import { BadRequestException, Body, Controller, ForbiddenException, HttpCode, Post, Req } from "@nestjs/common";
 import { ApiOperation, ApiTags } from "@nestjs/swagger";
-import type { Prisma } from "../generated/prisma/client.mjs";
+import type { Prisma } from "../generated/prisma/client.cjs";
 import { PrismaService } from "../database/prisma.service.mjs";
 import type { RequestLike } from "../auth/auth.types.mjs";
 import { PrepareInvitationDto, CompleteInvitationDto } from "./hospital-application.dto.mjs";
