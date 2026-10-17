@@ -17,7 +17,7 @@
       "root": "apps/api",
       "framework": "nestjs",
       "entrypoint": "src/main.mts",
-      "buildCommand": "npm run build"
+      "buildCommand": "npm run build:vercel"
     }
   },
   "rewrites": [
