@@ -77,7 +77,7 @@ This document tracks the user-provided master prompt. It is a scope record, not 
 
 - Made hospital invitation and first Super Admin setup preparation a single atomic claim. Replayed setup links and concurrent claims can no longer replace the prepared password or MFA secret.
 - Added negative tests for replay and concurrent claim failures on both setup paths.
-- Verified 33/33 API tests. This hardening is implemented locally; it still needs API build, GitHub push, and Vercel deployment verification.
+- Verified 33/33 API tests, Prisma schema validation, API production build, web TypeScript check, and Next.js production build. Commit `7d78a24` is pushed to GitHub `main` and deployed to Vercel Production (deployment `CnpEJ5KkafSpbUvXNp6iWUCC8N9g`, Ready). `/login` and `/super-admin/login` return 200; `/api/v1/health/ready` returns `ready`; unauthenticated `/super-admin` redirects to sign-in and the protected dashboard API returns 401. First Super Admin email delivery/bootstrap and authenticated dashboard use remain unverified because Resend sender credentials are not configured. Do not use real patient data until the remaining account, email, and tenant-isolation checks pass.
 
 ### 0.3.0 — Authentication flow, permissions and RLS migration
 
