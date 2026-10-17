@@ -1,11 +1,13 @@
-import { Controller, ForbiddenException, Get, Query, Req, UseGuards } from "@nestjs/common";
+import { BadRequestException, Body, Controller, ForbiddenException, Get, Post, Query, Req, UseGuards } from "@nestjs/common";
 import { ApiCookieAuth, ApiHeader, ApiOperation, ApiTags } from "@nestjs/swagger";
 import type { Prisma } from "@prisma/client";
+import { randomBytes } from "node:crypto";
 import { PrismaService } from "../database/prisma.service.mjs";
 import type { RequestLike } from "../auth/auth.types.mjs";
 import { SessionAuthGuard } from "../auth/session-auth.guard.mjs";
 import { TenantMembershipGuard } from "../auth/tenant-membership.guard.mjs";
 import { PatientListDto } from "./patient-list.dto.mjs";
+import { PatientRegistrationDto } from "./patient-registration.dto.mjs";
 
 @ApiTags("patients")
 @ApiCookieAuth("jr-xpert-session")
@@ -94,5 +96,79 @@ export class PatientsController {
       total,
       totalPages: Math.ceil(total / query.limit),
     };
+  }
+
+  @Post()
+  @ApiHeader({ name: "x-organization-id", required: true, description: "Organization context; checked against active membership." })
+  @ApiHeader({ name: "x-hospital-id", required: true, description: "Hospital context; checked against active membership." })
+  @ApiHeader({ name: "x-branch-id", required: false, description: "Optional branch scope; checked against active membership." })
+  @ApiOperation({ summary: "Register a patient in the verified hospital scope; MRN is server-generated" })
+  async registerPatient(@Body() body: PatientRegistrationDto, @Req() request: RequestLike) {
+    const userId = request.authSession!.user.id;
+    const tenant = request.tenant!;
+    if (!tenant.hospitalId) throw new ForbiddenException("A hospital context is required for patient registration.");
+    const permission = await this.prisma.rolePermission.findFirst({
+      where: {
+        permissionId: "patient.record.create",
+        roleCode: { in: tenant.memberships.map(({ role }) => role) },
+      },
+      select: { permissionId: true },
+    });
+    if (!permission) throw new ForbiddenException("Your active role does not grant patient registration.");
+
+    const firstName = body.firstName.trim();
+    const lastName = body.lastName.trim();
+    if (!firstName || !lastName) throw new BadRequestException("Provide the patient's first and last name.");
+    const dateOfBirth = body.dateOfBirth ? new Date(`${body.dateOfBirth}T00:00:00.000Z`) : null;
+    if (dateOfBirth) {
+      const earliestAllowed = new Date();
+      earliestAllowed.setUTCFullYear(earliestAllowed.getUTCFullYear() - 130);
+      if (dateOfBirth.getTime() > Date.now() || dateOfBirth < earliestAllowed) {
+        throw new BadRequestException("The date of birth is outside the accepted range.");
+      }
+    }
+
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const mrn = `JRX-${randomBytes(12).toString("hex").toUpperCase()}`;
+      try {
+        return await this.prisma.$transaction(async (transaction) => {
+          await transaction.$queryRaw`SELECT
+            set_config('app.user_id', ${userId}, true),
+            set_config('app.organization_id', ${tenant.organizationId}, true),
+            set_config('app.hospital_id', ${tenant.hospitalId}, true),
+            set_config('app.branch_id', ${tenant.branchId ?? ""}, true)`;
+          const patient = await transaction.patient.create({
+            data: {
+              organizationId: tenant.organizationId,
+              hospitalId: tenant.hospitalId!,
+              branchId: tenant.branchId,
+              mrn,
+              firstName,
+              lastName,
+              dateOfBirth,
+              phone: body.phone?.trim() || null,
+              email: body.email?.trim().toLowerCase() || null,
+            },
+            select: { id: true, mrn: true, firstName: true, lastName: true, createdAt: true },
+          });
+          await transaction.auditEvent.create({ data: {
+            organizationId: tenant.organizationId,
+            actorUserId: userId,
+            action: "patient.registered",
+            resourceType: "patient",
+            resourceId: patient.id,
+            metadata: { hospitalId: tenant.hospitalId, branchId: tenant.branchId } as Prisma.InputJsonObject,
+          } });
+          return { patient };
+        });
+      } catch (error) {
+        if (error instanceof BadRequestException || error instanceof ForbiddenException) throw error;
+        const isMrnCollision = typeof error === "object" && error !== null && "code" in error && error.code === "P2002";
+        if (isMrnCollision && attempt < 2) continue;
+        if (isMrnCollision) throw new BadRequestException("Unable to allocate a patient number. Retry the registration.");
+        throw error;
+      }
+    }
+    throw new BadRequestException("Unable to allocate a patient number. Retry the registration.");
   }
 }
