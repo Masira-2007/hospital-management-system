@@ -41,7 +41,7 @@ This document tracks the user-provided master prompt. It is a scope record, not 
 | Communication | Telemedicine, notifications, reminders and patient support | Not started |
 | AI/operations intelligence | Approved-data assistant and operational workflows with human review | Not started; prompt content is truncated during section 19.E |
 | Integrations and API | Versioned REST/OpenAPI, realtime, gateways, analyzers, PACS, insurer and accounting adapters | Versioned NestJS health/auth/session/patient-directory/hospital-onboarding/platform APIs; OpenAPI available only outside production. Email via configured Resend; other external service adapters remain unimplemented |
-| Infrastructure | PostgreSQL, Prisma migrations, Redis/jobs, private S3-compatible files, Docker, CI/CD, monitoring, backup and environments | PostgreSQL/Redis Compose foundation; runtime pool limits; readiness endpoint; API and web deployment instructions. Neon production API readiness returned `ready`; the newest audit migration is not verified remotely; no backup/restore operations |
+| Infrastructure | PostgreSQL, Prisma migrations, Redis/jobs, private S3-compatible files, Docker, CI/CD, monitoring, backup and environments | PostgreSQL/Redis Compose foundation; runtime pool limits; readiness endpoint; API and web deployment instructions. All 7 recorded Neon production migrations applied and API readiness returned `ready`; no backup/restore operations |
 | Quality and documentation | Unit, integration, API, end-to-end, threat/privacy review and deployment guides | 29 API unit tests, Prisma validation, API build, web TypeScript check, and Next.js production build pass locally. No live PostgreSQL integration suite, end-to-end browser suite, cross-tenant proof against the hosted database, threat/privacy review or clinical/security certification |
 
 ## Required architecture and product constraints
@@ -71,7 +71,7 @@ This document tracks the user-provided master prompt. It is a scope record, not 
 - Added a paginated, filterable Super Admin activity feed that omits audit metadata and excludes hospital-scoped patient-directory access trails.
 - Added least-privilege, column-level audit read grants and indexes for the new endpoint, plus coverage for pagination, metadata withholding, patient-trail exclusion, and reversed date ranges.
 - Verified 29/29 API unit tests, Prisma schema validation, API production build, web TypeScript check, and Next.js production build.
-- Live API readiness returned `ready`; the newest audit migration, email delivery, first Super Admin bootstrap, authenticated end-to-end login, and tenant-isolation proof against hosted Neon remain unverified. This is not approved for real patient records.
+- All 7 recorded migrations, including the new audit grant migration, were applied to Neon; API readiness returned `ready`; the Vercel production deployment for this commit is Ready. Email delivery, first Super Admin bootstrap, authenticated end-to-end login, and tenant-isolation proof against hosted Neon remain unverified. This is not approved for real patient records.
 
 ### 0.3.0 — Authentication flow, permissions and RLS migration
 

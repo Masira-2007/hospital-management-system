@@ -2,7 +2,7 @@
 
 **Better Care. Smarter Management. Healthier Tomorrow.**
 
-JR Xpert HMS is an in-progress, multi-hospital healthcare platform. The public dashboard remains a visual preview using fictional sample records. Backend onboarding and authentication are implemented, but production database migrations, account bootstrap, and live end-to-end authorization must be verified before real patient information is used.
+JR Xpert HMS is an in-progress, multi-hospital healthcare platform. The public dashboard remains a visual preview using fictional sample records. Backend onboarding and authentication are implemented; production migrations are applied and API database readiness is verified. Account bootstrap, email delivery, live authenticated workflows, and tenant-isolation testing still need completion before any real patient information is used.
 
 ## What is implemented
 
@@ -21,7 +21,7 @@ JR Xpert HMS is an in-progress, multi-hospital healthcare platform. The public d
 
 ## Not ready for real patient data
 
-The live API readiness endpoint returned `ready` on 2026-10-17, which verifies that the deployed API can reach its database. It does not verify authenticated workflows, the newest platform-audit migration, account bootstrap, email delivery, backup restoration, or cross-hospital isolation. Do not enter real patient information until those checks and a security review are complete. The local production migration check still needs a successful run against Neon using its direct connection.
+All 7 recorded Neon production migrations, including the platform-audit read grants, were applied successfully on 2026-10-17. The live API readiness endpoint returned `ready` the same day, which verifies that the deployed API can reach its database. It does not verify authenticated workflows, account bootstrap, email delivery, backup restoration, or cross-hospital isolation. Do not enter real patient information until those checks and a security review are complete.
 
 Other unfinished scope includes patient registration and clinical EMR writes, appointments, nursing/ward/OT workflows, pharmacy, laboratory, billing and payments, insurance, inventory, HR/payroll, mobile apps, notifications beyond account recovery/onboarding, AI workflows, production monitoring/backups, and end-to-end testing against PostgreSQL. This is not a complete HMS or a compliance certification.
 
@@ -63,7 +63,7 @@ The monorepo contains two separately deployable applications. Vercel documents N
 
 Production API startup also requires `DATABASE_URL`, an HTTPS `APP_URL` included in the exact `WEB_ORIGIN` allowlist, a unique 32+ character `AUTH_RATE_LIMIT_SECRET`, and a 32-byte hexadecimal `MFA_ENCRYPTION_KEY`. Use a least-privilege runtime database role that is neither superuser nor `BYPASSRLS`; `FORCE ROW LEVEL SECURITY` cannot constrain those privileged PostgreSQL roles. Use separate preview/staging/production credentials and databases.
 
-No Neon connection string or Vercel secret is stored in this repository. Production API readiness was observed as ready; a local authenticated Neon write/read/migration check, email delivery, first administrator bootstrap, live authenticated login, and tenant-isolation proof against Neon have not been verified in this workspace.
+No Neon connection string or Vercel secret is stored in this repository. Production API readiness and the recorded migration set were verified. An authenticated Neon write/read check, email delivery, first administrator bootstrap, live authenticated login, and tenant-isolation proof against Neon have not been verified in this workspace.
 
 ## Security notes
 
