@@ -13,6 +13,11 @@ type PlatformHospital = {
   _count: { branches: number; memberships: number };
   subscriptions: Array<{ status: string; currentPeriodEnd: string; plan: { code: string; name: string } }>;
 };
+type PlatformAuditEvent = {
+  id: string; actorUserId: string | null; action: string; resourceType: string; resourceId: string | null; createdAt: string;
+  actor: { displayName: string } | null; organization: { id: string; name: string } | null;
+};
+type PlatformAuditPagination = { page: number; pageSize: number; total: number; pages: number };
 
 const initialApplication = {
   hospitalName: "", hospitalType: "GENERAL", officialEmail: "", contactPhone: "", website: "", streetAddress: "",
@@ -202,35 +207,52 @@ export function PlatformDashboard({ identity }: { identity: { name: string; emai
   const router = useRouter();
   const [applications, setApplications] = useState<Array<Record<string, unknown>>>([]);
   const [hospitals, setHospitals] = useState<PlatformHospital[]>([]);
+  const [auditEvents, setAuditEvents] = useState<PlatformAuditEvent[]>([]);
+  const [auditPagination, setAuditPagination] = useState<PlatformAuditPagination>({ page: 1, pageSize: 25, total: 0, pages: 0 });
   const [summary, setSummary] = useState<Record<string, unknown> | null>(null);
   const [selectedStatus, setSelectedStatus] = useState("PENDING_REVIEW");
   const [hospitalStatus, setHospitalStatus] = useState("");
   const [hospitalSearch, setHospitalSearch] = useState("");
+  const [auditAction, setAuditAction] = useState("");
+  const [auditPage, setAuditPage] = useState(1);
   const [busyId, setBusyId] = useState("");
   const [error, setError] = useState("");
+  const [auditError, setAuditError] = useState("");
   const [notice, setNotice] = useState("");
 
   async function load() {
     setError("");
+    setAuditError("");
     try {
-      const [overview, applicationList] = await Promise.all([
+      const auditParams = new URLSearchParams({ page: String(auditPage), pageSize: "25" });
+      if (auditAction) auditParams.set("action", auditAction);
+      const [overview, applicationList, auditList] = await Promise.all([
         fetch("/api/v1/platform/dashboard", { cache: "no-store" }),
         fetch(`/api/v1/platform/applications?status=${encodeURIComponent(selectedStatus)}`, { cache: "no-store" }),
+        fetch(`/api/v1/platform/audit-events?${auditParams}`, { cache: "no-store" }),
       ]);
       const hospitalParams = new URLSearchParams({ page: "1", pageSize: "50" });
       if (hospitalStatus) hospitalParams.set("status", hospitalStatus);
       if (hospitalSearch.trim()) hospitalParams.set("search", hospitalSearch.trim());
       const hospitalList = await fetch(`/api/v1/platform/hospitals?${hospitalParams}`, { cache: "no-store" });
-      if (overview.status === 401 || applicationList.status === 401 || hospitalList.status === 401) { router.replace("/super-admin/login"); return; }
+      if (overview.status === 401 || applicationList.status === 401 || hospitalList.status === 401 || auditList.status === 401) { router.replace("/super-admin/login"); return; }
       if (!overview.ok || !applicationList.ok || !hospitalList.ok) throw new Error("The secure platform service could not load the dashboard.");
       const data = await overview.json() as Record<string, unknown>;
       const list = await applicationList.json() as { applications?: Array<Record<string, unknown>> };
       const hospitalData = await hospitalList.json() as { hospitals?: PlatformHospital[] };
       setSummary(data); setApplications(list.applications ?? []); setHospitals(hospitalData.hospitals ?? []);
+      if (auditList.ok) {
+        const auditData = await auditList.json() as { events?: PlatformAuditEvent[]; pagination?: PlatformAuditPagination };
+        setAuditEvents(auditData.events ?? []);
+        if (auditData.pagination) setAuditPagination(auditData.pagination);
+      } else {
+        setAuditEvents([]);
+        setAuditError("Audit activity is temporarily unavailable. Refresh to try again.");
+      }
     } catch (reason) { setError(reason instanceof Error ? reason.message : "Dashboard unavailable."); }
   }
 
-  useEffect(() => { void load(); }, [selectedStatus, hospitalStatus]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { void load(); }, [selectedStatus, hospitalStatus, auditAction, auditPage]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function action(url: string, body: unknown, successText: string) {
     setBusyId(url); setError(""); setNotice("");
@@ -270,6 +292,11 @@ export function PlatformDashboard({ identity }: { identity: { name: string; emai
           {applicationStatus === "NEEDS_INFORMATION" && typeof item.reviewReason === "string" && <p className="platform-review-reason">Requested: {item.reviewReason}</p>}
         </article>;
       })}</div>}
+      <section className="platform-audit" aria-labelledby="platform-audit-title">
+        <div className="platform-list-heading"><div><h2 id="platform-audit-title">Security and platform activity</h2><p>Recent account and hospital administration events. Patient-directory access trails stay within the hospital tenant.</p></div><div className="platform-audit-tools"><label><span className="sr-only">Filter audit events by action</span><select aria-label="Filter audit activity" value={auditAction} onChange={(event) => { setAuditAction(event.target.value); setAuditPage(1); }}><option value="">All activity</option><option value="auth.login_succeeded">Successful sign-ins</option><option value="auth.login_failed">Failed sign-ins</option><option value="auth.password_reset_completed">Password resets</option><option value="hospital.application_approved">Hospital approvals</option><option value="hospital.application_rejected">Hospital rejections</option><option value="hospital.suspended">Hospital suspensions</option><option value="hospital.reactivated">Hospital reactivations</option></select></label><button type="button" onClick={() => void load()}>Refresh activity</button></div></div>
+        {auditError ? <p className="platform-audit-error" role="status">{auditError}</p> : auditEvents.length === 0 ? <div className="platform-empty"><ShieldCheck size={23}/><h3>No activity in this view</h3><p>Recorded security and platform actions will appear here.</p></div> : <div className="platform-audit-table-wrap"><table className="platform-audit-table"><thead><tr><th>EVENT</th><th>ACTOR</th><th>ORGANIZATION</th><th>RESOURCE</th><th>TIME</th></tr></thead><tbody>{auditEvents.map((event) => <tr key={event.id}><td><code>{event.action}</code></td><td>{event.actor?.displayName ?? "System or unknown account"}</td><td>{event.organization?.name ?? "Platform"}</td><td>{event.resourceType.replaceAll("_", " ")}{event.resourceId ? <small>{event.resourceId}</small> : null}</td><td><time dateTime={event.createdAt}>{new Date(event.createdAt).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" })}</time></td></tr>)}</tbody></table></div>}
+        {!auditError && auditPagination.pages > 1 && <div className="platform-audit-pagination"><span>Page {auditPagination.page} of {auditPagination.pages} · {auditPagination.total.toLocaleString()} events</span><div><button type="button" disabled={auditPage <= 1} onClick={() => setAuditPage((page) => page - 1)}>Previous</button><button type="button" disabled={auditPage >= auditPagination.pages} onClick={() => setAuditPage((page) => page + 1)}>Next</button></div></div>}
+      </section>
       <p className="platform-footnote">This console supports hospital onboarding only. Patient, payment, clinical, file-storage, and subscription workflows are not exposed here.</p>
     </section>
   </main>;

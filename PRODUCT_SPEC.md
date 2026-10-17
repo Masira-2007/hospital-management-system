@@ -24,10 +24,10 @@ This document tracks the user-provided master prompt. It is a scope record, not 
 | Staff web application | Responsive, role-specific hospital workspace | Visual dashboard and fictional preview only |
 | Patient portal | Secure patient access, scheduling, reports, bills, consent and dependents | Not started |
 | Mobile apps | Android/iOS Expo app, secure storage, biometrics, push and offline state | Not started |
-| Super Admin SaaS | Tenant onboarding, subscriptions, usage, system health and support | MFA-protected onboarding dashboard, application review/decision APIs, organization/hospital/branch provisioning, invitation resend/revocation. No subscription, usage-billing, support-ticket or patient-record admin workflows |
+| Super Admin SaaS | Tenant onboarding, subscriptions, usage, system health and support | MFA-protected onboarding dashboard, application review/decision APIs, organization/hospital/branch provisioning, invitation resend/revocation, and paginated platform audit summaries. No subscription, usage-billing, support-ticket or patient-record admin workflows |
 | Multi-tenant core | Organizations, hospital groups, hospitals, branches, locations, tenant settings and subscriptions | Organization/hospital/branch/membership, status, role, permission, subscription, settings and patient-access-grant schema; runtime membership-verified scope; transaction-scoped PostgreSQL RLS policies for Patient and Appointment reads. Hospital application and invitation schemas/migrations are prepared; hosted migration status is unverified |
 | Authentication and identity | Verification, recovery, secure hashing, MFA, sessions, SSO, rate limits and device management | Login UI and same-origin BFF; hospital/patient/platform-admin mode filters; scrypt password verification; email-verified active-account check; TOTP required for privileged roles; 12-hour/30-day server-side sessions; password change, session listing/revocation, database throttling, one-use hashed reset tokens; email-verified application onboarding; hospital admin TOTP enrollment; emailed first-admin bootstrap. SSO/passkeys/device management remain unimplemented. Email requires provider setup |
-| Permissions and audit | Granular role/attribute access, scope, expiry, revocation, break-glass and reviewable audit | Role/permission tables and `patient.directory.read` permission seed; active membership and tenant status checks; patient directory scope check; audit events and append-only database triggers. No fine-grained clinical ABAC, approvals, break-glass or audit review interface |
+| Permissions and audit | Granular role/attribute access, scope, expiry, revocation, break-glass and reviewable audit | Role/permission tables and `patient.directory.read` permission seed; active membership and tenant status checks; patient directory scope check; append-only audit triggers; MFA-protected, paginated platform audit summaries with metadata withheld and patient-directory access trails excluded. No fine-grained clinical ABAC, approvals or break-glass |
 | Patient EMR/EHR | Registration, MRN, history, allergies, encounters, medication, notes, results, consent, signatures, amendments and exports | Tenant-scoped, paginated patient-directory read API only. The web directory remains fictional preview data; no clinical record writes or EMR/EHR workflows. Patient access grants are schema only |
 | Appointments and queues | Availability, booking, conflict prevention, walk-ins, tokens, queue, reminders and no-shows | Fictional schedule preview only; no booking API |
 | Doctor/nurse workflow | Clinical documentation, medication administration, observations, handover and escalation | Not started |
@@ -41,8 +41,8 @@ This document tracks the user-provided master prompt. It is a scope record, not 
 | Communication | Telemedicine, notifications, reminders and patient support | Not started |
 | AI/operations intelligence | Approved-data assistant and operational workflows with human review | Not started; prompt content is truncated during section 19.E |
 | Integrations and API | Versioned REST/OpenAPI, realtime, gateways, analyzers, PACS, insurer and accounting adapters | Versioned NestJS health/auth/session/patient-directory/hospital-onboarding/platform APIs; OpenAPI available only outside production. Email via configured Resend; other external service adapters remain unimplemented |
-| Infrastructure | PostgreSQL, Prisma migrations, Redis/jobs, private S3-compatible files, Docker, CI/CD, monitoring, backup and environments | PostgreSQL/Redis Compose foundation; runtime pool limits; readiness endpoint; API and web deployment instructions. Neon project exists on the Free Plan; connection/migrations and Vercel API project remain pending; no production operations |
-| Quality and documentation | Unit, integration, API, end-to-end, threat/privacy review and deployment guides | 23 API unit tests, Prisma validation, API build and web production build pass locally. No live PostgreSQL integration, end-to-end browser suite, cross-tenant proof against the hosted database, threat/privacy review or clinical/security certification |
+| Infrastructure | PostgreSQL, Prisma migrations, Redis/jobs, private S3-compatible files, Docker, CI/CD, monitoring, backup and environments | PostgreSQL/Redis Compose foundation; runtime pool limits; readiness endpoint; API and web deployment instructions. Neon production API readiness returned `ready`; the newest audit migration is not verified remotely; no backup/restore operations |
+| Quality and documentation | Unit, integration, API, end-to-end, threat/privacy review and deployment guides | 29 API unit tests, Prisma validation, API build, web TypeScript check, and Next.js production build pass locally. No live PostgreSQL integration suite, end-to-end browser suite, cross-tenant proof against the hosted database, threat/privacy review or clinical/security certification |
 
 ## Required architecture and product constraints
 
@@ -65,6 +65,13 @@ This document tracks the user-provided master prompt. It is a scope record, not 
 - Added hospital registration, verification, invitation acceptance, Super Admin sign-in, guarded dashboard pages, and local API rewrites.
 - Added migrations, limited runtime grants, and five negative onboarding/bootstrap/authorization tests. Current local run: 23/23 API tests pass; Prisma validation and both application builds pass.
 - Neon production migration/connection and Vercel runtime recovery remain unverified; email provider setup and first-admin bootstrap are pending. This increment does not make the application ready for real patient data.
+
+### 0.5.0 — Platform activity review and build verification
+
+- Added a paginated, filterable Super Admin activity feed that omits audit metadata and excludes hospital-scoped patient-directory access trails.
+- Added least-privilege, column-level audit read grants and indexes for the new endpoint, plus coverage for pagination, metadata withholding, patient-trail exclusion, and reversed date ranges.
+- Verified 29/29 API unit tests, Prisma schema validation, API production build, web TypeScript check, and Next.js production build.
+- Live API readiness returned `ready`; the newest audit migration, email delivery, first Super Admin bootstrap, authenticated end-to-end login, and tenant-isolation proof against hosted Neon remain unverified. This is not approved for real patient records.
 
 ### 0.3.0 — Authentication flow, permissions and RLS migration
 

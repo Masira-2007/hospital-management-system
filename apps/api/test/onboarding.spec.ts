@@ -5,7 +5,7 @@ import { HospitalApplicationsController } from "../src/applications/hospital-app
 import { HospitalInvitationsController } from "../src/applications/hospital-invitations.controller.mjs";
 import { PlatformBootstrapController } from "../src/applications/platform-bootstrap.controller.mjs";
 import { PlatformController } from "../src/applications/platform.controller.mjs";
-import { PlatformHospitalQueryDto } from "../src/applications/platform-hospital.dto.mjs";
+import { PlatformAuditQueryDto, PlatformHospitalQueryDto } from "../src/applications/platform-hospital.dto.mjs";
 import { SuperAdminGuard } from "../src/auth/super-admin.guard.mjs";
 import { hashSessionToken } from "../src/security/security.crypto.mjs";
 
@@ -145,4 +145,66 @@ test("platform hospital search is paginated and returns only operational metadat
   assert.equal(result.pagination.pages, 1);
   assert.equal(result.hospitals[0].name, "North Clinic");
   assert.equal("patients" in result.hospitals[0], false);
+});
+
+test("platform audit review is paginated, scoped by safe filters, and omits event metadata", async () => {
+  let findArgs: Record<string, unknown> | undefined;
+  let countWhere: unknown;
+  let auditEntry: unknown;
+  const event = {
+    id: "event-1", actorUserId: "admin-1", action: "hospital.application_approved", resourceType: "hospital_application",
+    resourceId: "application-1", createdAt: new Date(0), actor: { displayName: "Platform Admin" },
+    organization: { id: "org-1", name: "Example Organization" },
+  };
+  const prisma = {
+    $transaction: async (callback: (transaction: Record<string, unknown>) => Promise<unknown>) => callback({
+      auditEvent: {
+        count: async ({ where }: { where: unknown }) => { countWhere = where; return 1; },
+        findMany: async (args: Record<string, unknown>) => { findArgs = args; return [event]; },
+        create: async ({ data }: { data: unknown }) => { auditEntry = data; },
+      },
+    }),
+  };
+  const query = Object.assign(new PlatformAuditQueryDto(), {
+    action: "hospital.application_approved", organizationId: "org-1", page: 2, pageSize: 10,
+    from: "2026-01-01T00:00:00.000Z", to: "2026-02-01T00:00:00.000Z",
+  });
+  const result = await new PlatformController(prisma as never, {} as never).listAuditEvents(query, { authSession: { user: { id: "admin-1" } } } as never);
+  assert.equal(findArgs?.skip, 10);
+  assert.equal(findArgs?.take, 10);
+  assert.deepEqual(countWhere, findArgs?.where);
+  assert.deepEqual(countWhere, {
+    resourceType: { not: "patient_directory" },
+    action: "hospital.application_approved", organizationId: "org-1",
+    createdAt: { gte: new Date(query.from), lte: new Date(query.to) },
+  });
+  assert.equal(result.pagination.total, 1);
+  assert.equal(result.events[0].action, event.action);
+  assert.equal("metadata" in result.events[0], false);
+  assert.equal("email" in result.events[0].actor!, false);
+  assert.equal((auditEntry as { action: string }).action, "platform.audit_events_listed");
+});
+
+test("platform audit feed excludes hospital-scoped patient directory trails", async () => {
+  let findArgs: Record<string, unknown> | undefined;
+  const prisma = {
+    $transaction: async (callback: (transaction: Record<string, unknown>) => Promise<unknown>) => callback({
+      auditEvent: {
+        count: async () => 0,
+        findMany: async (args: Record<string, unknown>) => { findArgs = args; return []; },
+        create: async () => undefined,
+      },
+    }),
+  };
+  const query = Object.assign(new PlatformAuditQueryDto(), { page: 1, pageSize: 25 });
+  await new PlatformController(prisma as never, {} as never).listAuditEvents(query, { authSession: { user: { id: "admin-1" } } } as never);
+  assert.deepEqual(findArgs?.where, { resourceType: { not: "patient_directory" } });
+});
+
+test("platform audit review rejects reversed date ranges before querying", async () => {
+  let transactions = 0;
+  const controller = new PlatformController({ $transaction: async () => { transactions += 1; } } as never, {} as never);
+  const query = Object.assign(new PlatformAuditQueryDto(), { from: "2026-02-01T00:00:00.000Z", to: "2026-01-01T00:00:00.000Z" });
+  await assert.rejects(() => controller.listAuditEvents(query, request as never), (error: unknown) => error instanceof BadRequestException);
+  assert.equal(transactions, 0);
 });

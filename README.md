@@ -13,6 +13,7 @@ JR Xpert HMS is an in-progress, multi-hospital healthcare platform. The public d
 - Resend password recovery adapter. It returns a setup error until `RESEND_API_KEY`, a verified `AUTH_EMAIL_FROM`, and `APP_URL` are configured; it never reports a fake email delivery.
 - Hospital application submission and email verification, MFA-gated platform review APIs, provisioning of organizations/hospitals/branches, one-time hospital administrator invitations, and invitation acceptance with mandatory TOTP enrollment. The UI includes hospital registration, email verification, invitation setup, and a protected Super Admin onboarding dashboard.
 - A first-Super-Admin bootstrap script that sends a one-time email setup link; no default administrator credentials or bootstrap tokens are printed.
+- A protected Super Admin dashboard for hospital onboarding and platform operations, with paginated audit summaries. Patient-directory access trails stay tenant-scoped and audit metadata is not exposed.
 - Multi-hospital schema for organizations, hospitals, branches, memberships, role definitions, permissions, hospital settings, subscriptions, and patient access grants. Hospital status and membership are checked server-side.
 - Patient-directory read endpoint with role-permission lookup, verified tenant membership, a limited field set, bounded search/pagination, access auditing, and transaction-scoped PostgreSQL row-level security for patient and appointment reads.
 - Append-only audit-event triggers and a database readiness endpoint that returns no connection details.
@@ -20,7 +21,7 @@ JR Xpert HMS is an in-progress, multi-hospital healthcare platform. The public d
 
 ## Not ready for real patient data
 
-The repository has not been given a local Neon connection string. New migrations for platform applications, invitations, bootstrap tokens, and limited app-role grants have not been verified against the hosted Neon database in this workspace. The browser showed a Vercel API runtime invocation error during earlier checks; the current API deployment and its runtime secrets still need a successful remote health/readiness check. Do not enter real patient information until migration status, RLS behavior, backups, and the live database role are verified.
+The live API readiness endpoint returned `ready` on 2026-10-17, which verifies that the deployed API can reach its database. It does not verify authenticated workflows, the newest platform-audit migration, account bootstrap, email delivery, backup restoration, or cross-hospital isolation. Do not enter real patient information until those checks and a security review are complete. The local production migration check still needs a successful run against Neon using its direct connection.
 
 Other unfinished scope includes patient registration and clinical EMR writes, appointments, nursing/ward/OT workflows, pharmacy, laboratory, billing and payments, insurance, inventory, HR/payroll, mobile apps, notifications beyond account recovery/onboarding, AI workflows, production monitoring/backups, and end-to-end testing against PostgreSQL. This is not a complete HMS or a compliance certification.
 
@@ -53,7 +54,7 @@ If a local Next dev server holds `.next` open, run a separate verification build
 The monorepo contains two separately deployable applications. Vercel documents NestJS as a supported single-function backend and supports separate projects for folders in a monorepo ([NestJS](https://vercel.com/docs/frameworks/backend/nestjs), [monorepos](https://vercel.com/docs/monorepos)).
 
 1. In Neon, use the pooled URL for runtime and the direct migration/owner URL for schema changes. Keep the runtime role `jr_xpert_app` non-superuser and without `BYPASSRLS`; it must exist before the onboarding grants migration runs.
-2. Run production migrations from a trusted runner that can reach Neon’s direct endpoint. For this Vercel project, the build network cannot reach that endpoint; do not run migrations as part of the Vercel build. Put `DIRECT_URL` only in the ignored local `.env`, run `npm run db:migrate:deploy --workspace @jr-xpert/api`, then verify migration history and RLS with two synthetic hospitals in a non-production environment.
+2. Run production migrations from a trusted runner that can reach Neon’s direct endpoint; do not run migrations as part of the Vercel build. Put `DIRECT_URL` only in the ignored local `.env`, run `npm run db:migrate:deploy --workspace @jr-xpert/api`, then verify migration history and RLS with two synthetic hospitals in a non-production environment.
 3. Configure protected API environment variables in Vercel: pooled `DATABASE_URL`, HTTPS `APP_URL`, exact HTTPS `WEB_ORIGIN`, `AUTH_RATE_LIMIT_SECRET`, and `MFA_ENCRYPTION_KEY`. Set `RESEND_API_KEY` and a verified `AUTH_EMAIL_FROM` for recovery and onboarding mail. The application runtime uses only `DATABASE_URL`.
 4. After migrations succeed, deploy the API service, then verify `/api/v1/health` and `/api/v1/health/ready`. A 200 readiness response confirms database connectivity; run account-flow checks separately.
 5. In the web service, set server-only `JR_XPERT_API_URL` to the API’s HTTPS origin/path and `WEB_ORIGIN` to the exact web origin. Do not use `NEXT_PUBLIC_` for server secrets or connection strings.
@@ -62,7 +63,7 @@ The monorepo contains two separately deployable applications. Vercel documents N
 
 Production API startup also requires `DATABASE_URL`, an HTTPS `APP_URL` included in the exact `WEB_ORIGIN` allowlist, a unique 32+ character `AUTH_RATE_LIMIT_SECRET`, and a 32-byte hexadecimal `MFA_ENCRYPTION_KEY`. Use a least-privilege runtime database role that is neither superuser nor `BYPASSRLS`; `FORCE ROW LEVEL SECURITY` cannot constrain those privileged PostgreSQL roles. Use separate preview/staging/production credentials and databases.
 
-No Neon connection string or Vercel secret is stored in this repository. A local authenticated Neon write/read/migration check, production API readiness, email delivery, first administrator bootstrap, and live authenticated login have not been verified in this workspace.
+No Neon connection string or Vercel secret is stored in this repository. Production API readiness was observed as ready; a local authenticated Neon write/read/migration check, email delivery, first administrator bootstrap, live authenticated login, and tenant-isolation proof against Neon have not been verified in this workspace.
 
 ## Security notes
 

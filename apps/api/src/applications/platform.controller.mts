@@ -8,7 +8,7 @@ import { EmailDeliveryService } from "../auth/email-delivery.service.mjs";
 import type { RequestLike } from "../auth/auth.types.mjs";
 import { createSessionToken, hashSessionToken } from "../security/security.crypto.mjs";
 import { ApplicationDecisionDto, HospitalApplicationQueryDto } from "./hospital-application.dto.mjs";
-import { HospitalStatusChangeDto, PlatformHospitalQueryDto } from "./platform-hospital.dto.mjs";
+import { HospitalStatusChangeDto, PlatformAuditQueryDto, PlatformHospitalQueryDto } from "./platform-hospital.dto.mjs";
 
 const INVITATION_LIFETIME_MS = 72 * 60 * 60 * 1000;
 
@@ -70,6 +70,64 @@ export class PlatformController {
       }),
     ]);
     return { hospitals, pagination: { page: query.page, pageSize: query.pageSize, total, pages: Math.ceil(total / query.pageSize) } };
+  }
+
+  @Get("audit-events")
+  @ApiOperation({ summary: "Review paginated platform activity without clinical payloads or audit metadata" })
+  async listAuditEvents(@Query() query: PlatformAuditQueryDto, @Req() request: RequestLike) {
+    const from = query.from ? new Date(query.from) : undefined;
+    const to = query.to ? new Date(query.to) : undefined;
+    if (from && to && from > to) throw new BadRequestException("The start date must not be later than the end date.");
+
+    const where: Prisma.AuditEventWhereInput = {
+      // Patient-directory access trails remain scoped to the hospital tenant.
+      resourceType: { not: "patient_directory" },
+      ...(query.action ? { action: query.action } : {}),
+      ...(query.organizationId ? { organizationId: query.organizationId } : {}),
+      ...(from || to ? { createdAt: { ...(from ? { gte: from } : {}), ...(to ? { lte: to } : {}) } } : {}),
+    };
+    const skip = (query.page - 1) * query.pageSize;
+    const result = await this.prisma.$transaction(async (transaction) => {
+      const [total, events] = await Promise.all([
+        transaction.auditEvent.count({ where }),
+        transaction.auditEvent.findMany({
+          where,
+          orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+          skip,
+          take: query.pageSize,
+          select: {
+            id: true,
+            actorUserId: true,
+            action: true,
+            resourceType: true,
+            resourceId: true,
+            createdAt: true,
+            actor: { select: { displayName: true } },
+            organization: { select: { id: true, name: true } },
+          },
+        }),
+      ]);
+      await transaction.auditEvent.create({
+        data: {
+          actorUserId: request.authSession!.user.id,
+          action: "platform.audit_events_listed",
+          resourceType: "audit_event_collection",
+          metadata: {
+            page: query.page,
+            pageSize: query.pageSize,
+            actionFilter: query.action ?? null,
+            organizationFilter: query.organizationId ?? null,
+            resultCount: events.length,
+          } as Prisma.InputJsonObject,
+        },
+      });
+      return { total, events };
+    });
+
+    return {
+      events: result.events,
+      pagination: { page: query.page, pageSize: query.pageSize, total: result.total, pages: Math.ceil(result.total / query.pageSize) },
+    };
   }
 
   @Post("hospitals/:hospitalId/status")

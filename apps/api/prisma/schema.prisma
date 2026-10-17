@@ -328,6 +328,8 @@ model AuditEvent {
 
   @@index([organizationId, createdAt])
   @@index([actorUserId, createdAt])
+    @@index([createdAt(sort: Desc), id(sort: Desc)])
+    @@index([action, createdAt(sort: Desc)])
 }
 
 model Session {
