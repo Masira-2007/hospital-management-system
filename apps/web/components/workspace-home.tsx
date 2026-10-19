@@ -1,8 +1,9 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Building2, LogOut, UserRound, LoaderCircle } from "lucide-react";
+import { ArrowRight, Building2, HeartPulse, LogOut, UserRound, LoaderCircle } from "lucide-react";
 import { BrandMark } from "@/components/brand-mark";
 
 type Identity = {
@@ -34,7 +35,13 @@ export function WorkspaceHome() {
         if (!response.ok) throw new Error("unavailable");
         return await response.json() as Identity;
       })
-      .then((result) => { if (active && result) { setIdentity(result); setSelectedMembershipId(result.selectedMembershipId ?? null); setState("ready"); } })
+      .then((result) => { if (active && result) {
+        setIdentity(result);
+        setSelectedMembershipId(result.selectedMembershipId ?? null);
+        setState("ready");
+        const selected = result.memberships.find(({ id }) => id === result.selectedMembershipId);
+        if (selected?.role === "PATIENT" && selected.hospital) router.replace("/patient");
+      } })
       .catch(() => { if (active) setState("error"); });
     return () => { active = false; };
   }, [router]);
@@ -61,12 +68,16 @@ export function WorkspaceHome() {
         throw new Error(result?.message ?? "We couldn’t select that workspace. Refresh your affiliations and try again.");
       }
       setSelectedMembershipId(membershipId);
+      const membership = identity?.memberships.find(({ id }) => id === membershipId);
+      if (membership?.role === "PATIENT" && membership.hospital) router.replace("/patient");
     } catch (reason) {
       setSelectionError(reason instanceof Error ? reason.message : "Workspace selection is temporarily unavailable.");
     } finally {
       setBusyMembershipId("");
     }
   }
+
+  const selectedMembership = identity?.memberships.find(({ id }) => id === selectedMembershipId);
 
   return <main className="workspace-auth-page">
     <header className="workspace-auth-header"><BrandMark/><button type="button" onClick={logout}><LogOut size={16}/> Sign out</button></header>
@@ -85,7 +96,7 @@ export function WorkspaceHome() {
             {identity.memberships.length > 1 && <button className="workspace-select-button" type="button" aria-pressed={selectedMembershipId === membership.id} disabled={Boolean(busyMembershipId) || selectedMembershipId === membership.id} onClick={() => void selectMembership(membership.id)}>{busyMembershipId === membership.id ? "Selecting…" : selectedMembershipId === membership.id ? "Selected" : "Use this workspace"}</button>}
           </article>) : <p>No active hospital membership is linked to this account. Contact your organization administrator.</p>}
         </div>
-        <div className="workspace-scope-note"><b>Account access is active.</b><span>Clinical and operational modules will appear here when your organization enables them.</span></div>
+        {selectedMembership?.role === "PATIENT" && selectedMembership.hospital ? <div className="workspace-scope-note"><b>Your patient workspace is ready.</b><span>Review the patient details explicitly shared with this account.</span><Link className="workspace-patient-link" href="/patient"><HeartPulse size={14}/> Open patient portal <ArrowRight size={14}/></Link></div> : <div className="workspace-scope-note"><b>Account access is active.</b><span>Clinical and operational modules will appear here when your organization enables them.</span></div>}
       </>}
     </section>
     <footer className="workspace-auth-footer">JR Xpert HMS <span>Better Care. Smarter Management. Healthier Tomorrow.</span></footer>

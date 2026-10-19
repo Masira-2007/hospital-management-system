@@ -9,7 +9,7 @@
   "scripts": {
     "dev": "concurrently -k -n web,api -c cyan,magenta \"npm run dev --workspace @jr-xpert/web\" \"npm run start:dev --workspace @jr-xpert/api\"",
     "build": "npm run build --workspace @jr-xpert/web && npm run build --workspace @jr-xpert/api",
-    "test": "npm run test --workspace @jr-xpert/api",
+    "test": "npm run test --workspace @jr-xpert/web && npm run test --workspace @jr-xpert/api",
     "db:generate": "npm run db:generate --workspace @jr-xpert/api",
     "db:validate": "npm run db:validate --workspace @jr-xpert/api"
   },

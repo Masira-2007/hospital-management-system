@@ -56,9 +56,6 @@ export class PatientsController {
             firstName: true,
             lastName: true,
             dateOfBirth: true,
-            phone: true,
-            email: true,
-            createdAt: true,
           } },
         },
       });

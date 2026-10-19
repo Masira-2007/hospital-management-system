@@ -105,9 +105,6 @@ test("patient self-service returns only explicitly granted records in the select
     firstName: "Asha",
     lastName: "Shah",
     dateOfBirth: new Date("1990-01-01T00:00:00Z"),
-    phone: "+910000000000",
-    email: "asha@example.test",
-    createdAt: new Date("2026-01-01T00:00:00Z"),
   };
   const prisma = {
     $transaction: async (callback: (transaction: Record<string, unknown>) => Promise<unknown>) => callback({
@@ -151,7 +148,7 @@ test("patient self-service returns only explicitly granted records in the select
   assert.ok(((filters.OR as Array<Record<string, unknown>>)[1].expiresAt as { gt: unknown }).gt instanceof Date);
   assert.deepEqual(grantQuery?.select, {
     relationship: true,
-    patient: { select: { id: true, mrn: true, firstName: true, lastName: true, dateOfBirth: true, phone: true, email: true, createdAt: true } },
+    patient: { select: { id: true, mrn: true, firstName: true, lastName: true, dateOfBirth: true } },
   });
   assert.ok(rlsContext, "request installs transaction-scoped patient and tenant context");
   assert.equal(JSON.stringify(auditData).includes(patient.id), false);
