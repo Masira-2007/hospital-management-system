@@ -131,6 +131,13 @@ This document tracks the user-provided master prompt. It is a scope record, not 
 - Added migration `20261019160000_session_membership_selection` for a nullable session membership foreign key and index, with only a column-level runtime `UPDATE` grant. The migration was applied to Neon and verified with migration status plus a read-only role/RLS audit; `jr_xpert_app` remains non-superuser and without `BYPASSRLS`.
 - Added tests for membership ownership, selection persistence/auditing, auto-selection for a single membership, cross-hospital header forgery and mandatory selection for multiple scopes. Current API suite: 62/62 passing; API build and Prisma validation pass. The web build is being re-run after the selector UI changes. No authenticated browser E2E or two-hospital non-production RLS proof has been run.
 
+### 0.16.0 — Patient account self-service read foundation
+
+- Added authenticated `GET /api/v1/patients/me`. It requires a PATIENT membership in the selected active hospital and returns only records covered by that account’s explicit, active, non-expired access grants. Queries are scoped to organization, hospital and optional branch; returned fields are limited to basic identity information. The access audit records the result count and tenant context without patient IDs or clinical data.
+- Added migration `20261019200000_patient_self_service_read`, which enables and forces RLS on `PatientAccessGrant`, limits the runtime role to SELECT, and adds explicit-grant RLS for patient rows. Neon reports all 13 migrations up to date. The read-only runtime-role verifier confirms both tables have forced RLS, the required policies and SELECT grant exist, and `jr_xpert_app` is neither superuser nor `BYPASSRLS`.
+- Verified API unit tests 69/69, Prisma schema validation, the full web/API production build (using `.next-final` because OneDrive denied Next’s default build-directory writes), and `git diff --check`.
+- Patient self-service is API-only; this does not implement clinical records or a patient-facing UI. No two-hospital database isolation test was run because no separate non-production database is configured. Real email-code login also remains unavailable: Vercel Production has no Resend key/verified `AUTH_EMAIL_FROM`, and the owner does not currently have a sending domain. This deployment must not be treated as ready for real patient records.
+
 ### 0.15.0 — Super Admin staff access operations
 
 - Added a paginated, searchable staff-account directory with role/workspace membership summaries. Patient-only and mixed patient/staff accounts, as well as platform administrator accounts, are excluded from the directory; password hashes and clinical records are never selected.

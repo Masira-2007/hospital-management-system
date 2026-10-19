@@ -16,6 +16,74 @@ import { PatientRegistrationDto } from "./patient-registration.dto.mjs";
 export class PatientsController {
   constructor(private readonly prisma: PrismaService) {}
 
+  @Get("me")
+  @ApiHeader({ name: "x-organization-id", required: true, description: "Organization context; checked against the signed-in patient's active membership." })
+  @ApiHeader({ name: "x-hospital-id", required: true, description: "Hospital context; checked against the signed-in patient's active membership." })
+  @ApiHeader({ name: "x-branch-id", required: false, description: "Optional branch scope; checked against the signed-in patient's active membership." })
+  @ApiOperation({ summary: "List patient records explicitly granted to the signed-in patient account" })
+  async listMyPatientRecords(@Req() request: RequestLike) {
+    const userId = request.authSession!.user.id;
+    const tenant = request.tenant!;
+    if (!tenant.hospitalId || !tenant.memberships.some(({ role }) => role === "PATIENT")) {
+      throw new ForbiddenException("A patient account and an active hospital context are required.");
+    }
+
+    const grants = await this.prisma.$transaction(async (transaction) => {
+      await transaction.$queryRaw`SELECT
+        set_config('app.user_id', ${userId}, true),
+        set_config('app.organization_id', ${tenant.organizationId}, true),
+        set_config('app.hospital_id', ${tenant.hospitalId}, true),
+        set_config('app.branch_id', ${tenant.branchId ?? ""}, true)`;
+      const visibleGrants = await transaction.patientAccessGrant.findMany({
+        where: {
+          userId,
+          organizationId: tenant.organizationId,
+          canViewRecords: true,
+          revokedAt: null,
+          OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }],
+          patient: { is: {
+            organizationId: tenant.organizationId,
+            hospitalId: tenant.hospitalId!,
+            ...(tenant.branchId ? { branchId: tenant.branchId } : {}),
+          } },
+        },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+        select: {
+          relationship: true,
+          patient: { select: {
+            id: true,
+            mrn: true,
+            firstName: true,
+            lastName: true,
+            dateOfBirth: true,
+            phone: true,
+            email: true,
+            createdAt: true,
+          } },
+        },
+      });
+      await transaction.auditEvent.create({
+        data: {
+          organizationId: tenant.organizationId,
+          actorUserId: userId,
+          action: "patient.self_service_records_listed",
+          resourceType: "patient_self_service",
+          metadata: {
+            hospitalId: tenant.hospitalId,
+            branchScoped: Boolean(tenant.branchId),
+            resultCount: visibleGrants.length,
+          } as Prisma.InputJsonObject,
+        },
+      });
+      return visibleGrants;
+    });
+
+    return {
+      patients: grants.map(({ relationship, patient }) => ({ relationship, patient })),
+      total: grants.length,
+    };
+  }
+
   @Get()
   @ApiHeader({ name: "x-organization-id", required: true, description: "Organization context; checked against active membership." })
   @ApiHeader({ name: "x-hospital-id", required: true, description: "Hospital context; checked against active membership." })
