@@ -11,6 +11,19 @@ export class EmailDeliveryService {
     return Boolean(process.env.RESEND_API_KEY && process.env.AUTH_EMAIL_FROM && process.env.APP_URL);
   }
 
+  isEmailDeliveryConfigured(): boolean {
+    return Boolean(process.env.RESEND_API_KEY && process.env.AUTH_EMAIL_FROM);
+  }
+
+  async sendLoginVerificationCode(recipient: string, code: string): Promise<void> {
+    await this.sendEmail({
+      recipient,
+      subject: "Your JR Xpert HMS sign-in code",
+      text: `Your one-time JR Xpert HMS sign-in code is ${code}. It expires in 10 minutes. Do not share this code with anyone. If you did not try to sign in, you can ignore this email.`,
+      html: `<p>Your one-time JR Xpert HMS sign-in code is:</p><p style="font-size:24px;font-weight:bold;letter-spacing:6px">${code}</p><p>It expires in 10 minutes. Do not share this code with anyone. If you did not try to sign in, you can ignore this email.</p>`,
+    });
+  }
+
   async sendPasswordReset(recipient: string, token: string): Promise<void> {
     const apiKey = process.env.RESEND_API_KEY;
     const from = process.env.AUTH_EMAIL_FROM;

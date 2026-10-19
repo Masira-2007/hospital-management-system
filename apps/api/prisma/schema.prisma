@@ -231,6 +231,8 @@ model User {
   auditEvents     AuditEvent[]
   sessions        Session[]
   passwordResetTokens PasswordResetToken[]
+  loginVerificationCodes LoginVerificationCode[]
+  externalIdentities ExternalIdentity[]
   patientAccessGrants PatientAccessGrant[]
   reviewedApplications HospitalApplication[] @relation("HospitalApplicationReviewer")
   createdInvitations HospitalInvitation[] @relation("InvitationCreator")
@@ -357,6 +359,51 @@ model PasswordResetToken {
 
   @@index([userId, expiresAt])
   @@index([expiresAt, usedAt])
+}
+
+model LoginVerificationCode {
+  id             String    @id @default(cuid())
+  userId         String
+  tokenHash      String    @unique
+  codeHash       String
+  mode           String
+  rememberMe     Boolean   @default(false)
+  failedAttempts Int       @default(0)
+  expiresAt      DateTime
+  usedAt         DateTime?
+  createdAt      DateTime  @default(now())
+  user           User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([expiresAt, usedAt])
+}
+
+model OAuthLoginTransaction {
+  id            String   @id @default(cuid())
+  provider      String
+  mode          String
+  stateHash     String   @unique
+  nonceHash     String
+  codeChallenge String
+  rememberMe    Boolean  @default(false)
+  expiresAt     DateTime
+  usedAt        DateTime?
+  createdAt     DateTime @default(now())
+
+  @@index([expiresAt, usedAt])
+}
+
+model ExternalIdentity {
+  id        String   @id @default(cuid())
+  provider  String
+  subject   String
+  userId    String
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, subject])
+  @@unique([userId, provider])
+  @@index([userId])
 }
 
 model Role {

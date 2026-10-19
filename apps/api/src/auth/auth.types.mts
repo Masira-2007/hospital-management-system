@@ -20,6 +20,7 @@ export interface RequestLike {
 
 export interface ResponseLike {
   setHeader(name: string, value: string): void;
+  statusCode?: number;
 }
 
 export function getHeader(request: RequestLike, name: string): string | undefined {

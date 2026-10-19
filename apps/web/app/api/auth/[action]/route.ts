@@ -92,10 +92,13 @@ async function proxy(request: NextRequest, action: string, method: "GET" | "POST
     });
     const responseBody = response.status === 204 ? null : await response.json().catch(() => null);
     if (!response.ok) {
-      if (response.status === 401) return jsonError(401, "AUTHENTICATION_FAILED", "Email, password, or second factor is invalid.");
+      if (response.status === 401) return jsonError(401, "AUTHENTICATION_FAILED", "Email, password, or verification code is invalid.");
       if (response.status === 429) return jsonError(429, "RATE_LIMITED", "Too many requests. Try again later.");
       if (response.status === 503 && action === "forgot-password" && responseBody && typeof responseBody === "object" && "code" in responseBody && responseBody.code === "PASSWORD_RECOVERY_NOT_CONFIGURED") {
         return jsonError(503, "PASSWORD_RECOVERY_NOT_CONFIGURED", "Password recovery is not configured. Contact your hospital administrator.");
+      }
+      if (response.status === 503 && action === "login" && responseBody && typeof responseBody === "object" && "code" in responseBody && responseBody.code === "LOGIN_EMAIL_NOT_CONFIGURED") {
+        return jsonError(503, "LOGIN_EMAIL_NOT_CONFIGURED", "Email verification is not configured yet. Contact your administrator.");
       }
       if (response.status === 400) return jsonError(400, "INVALID_REQUEST", "Check the submitted information and try again.");
       return jsonError(response.status >= 500 ? 503 : response.status, "SERVICE_UNAVAILABLE", "The secure service could not complete this request.");

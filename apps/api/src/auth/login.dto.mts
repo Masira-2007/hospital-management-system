@@ -19,6 +19,10 @@ export class LoginDto {
   rememberMe?: boolean;
 
   @IsOptional()
+  @Matches(/^[a-f0-9]{64}$/i)
+  challengeToken?: string;
+
+  @IsOptional()
   @Matches(/^\d{6}$/)
-  mfaCode?: string;
+  emailCode?: string;
 }

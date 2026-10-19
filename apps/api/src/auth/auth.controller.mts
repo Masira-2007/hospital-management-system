@@ -19,12 +19,15 @@ import type { Prisma } from "@prisma/client";
 import { PrismaService } from "../database/prisma.service.mjs";
 import {
   createSessionToken,
+  createEmailVerificationCode,
+  hashEmailVerificationCode,
   hashPassword,
   hashRateLimitKey,
   hashSessionToken,
   performDummyPasswordCheck,
   verifyPassword,
   verifyTotp,
+  verifyEmailVerificationCode,
 } from "../security/security.crypto.mjs";
 import { LoginDto } from "./login.dto.mjs";
 import { ChangePasswordDto } from "./change-password.dto.mjs";
@@ -32,25 +35,19 @@ import { PasswordResetDto, PasswordResetRequestDto } from "./password-reset.dto.
 import { EmailDeliveryService } from "./email-delivery.service.mjs";
 import { getHeader, type RequestLike, type ResponseLike } from "./auth.types.mjs";
 import { SessionAuthGuard, sessionCookieName } from "./session-auth.guard.mjs";
+import { OAuthService } from "./oauth.service.mjs";
+import { OAuthStartDto, OAuthCallbackDto } from "./oauth.dto.mjs";
 
 const SESSION_DURATION_MS = 12 * 60 * 60 * 1000;
 const REMEMBERED_SESSION_DURATION_MS = 30 * 24 * 60 * 60 * 1000;
 const PASSWORD_RESET_DURATION_MS = 20 * 60 * 1000;
+const LOGIN_CODE_DURATION_MS = 10 * 60 * 1000;
+const MAX_LOGIN_CODE_ATTEMPTS = 5;
 const RATE_WINDOW_MS = 15 * 60 * 1000;
 const MAX_FAILED_ATTEMPTS = 8;
-const PRIVILEGED_ROLES = new Set([
-  "SUPER_ADMIN",
-  "PLATFORM_ADMIN",
-  "ORGANIZATION_OWNER",
-  "HOSPITAL_ADMIN",
-  "HOSPITAL_MANAGER",
-  "MEDICAL_DIRECTOR",
-  "SECURITY_AUDITOR",
-]);
-
 const authenticationFailure = () => new UnauthorizedException({
   code: "AUTHENTICATION_FAILED",
-  message: "Email, password, or second factor is invalid.",
+  message: "Email, password, or verification code is invalid.",
 });
 
 @ApiTags("authentication")
@@ -58,14 +55,38 @@ const authenticationFailure = () => new UnauthorizedException({
 export class AuthController {
   private throttleCleanupCounter = 0;
 
-  constructor(private readonly prisma: PrismaService, private readonly emailDelivery: EmailDeliveryService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly emailDelivery: EmailDeliveryService,
+    private readonly oauth: OAuthService = null!,
+  ) {}
+
+  @Post("oauth/:provider/start")
+  @HttpCode(200)
+  @ApiOperation({ summary: "Start a state-, nonce-, and PKCE-protected Google or Apple sign-in" })
+  async startOAuth(@Param("provider") provider: string, @Body() body: OAuthStartDto, @Req() request: RequestLike) {
+    return this.oauth.start(provider as "google" | "apple", body, request);
+  }
+
+  @Post("oauth/:provider/callback")
+  @HttpCode(200)
+  @ApiOperation({ summary: "Verify an OAuth callback and create a session for an existing authorized account" })
+  async finishOAuth(
+    @Param("provider") provider: string,
+    @Body() body: OAuthCallbackDto,
+    @Req() request: RequestLike,
+    @Res({ passthrough: true }) response: ResponseLike,
+  ) {
+    return this.oauth.callback(provider as "google" | "apple", body, request, response);
+  }
 
   @Post("login")
   @HttpCode(200)
-  @ApiOperation({ summary: "Create a secure, server-managed session for a verified hospital account" })
+  @ApiOperation({ summary: "Send and verify a one-time email code before creating a server-managed session" })
   async login(@Body() body: LoginDto, @Req() request: RequestLike, @Res({ passthrough: true }) response: ResponseLike) {
     const email = body.email.trim().toLowerCase();
     const mode = body.mode ?? "HOSPITAL";
+    if (Boolean(body.challengeToken) !== Boolean(body.emailCode)) throw authenticationFailure();
     const keys = this.getRateKeys(email, request.ip ?? "unknown");
     await this.consumeLoginAttempt(keys);
 
@@ -102,41 +123,81 @@ export class AuthController {
             : role !== "PATIENT",
       ),
     );
-    const hasPrivilegedRole = user?.memberships.some((membership) => PRIVILEGED_ROLES.has(membership.role)) ?? false;
-    let matchedMfaCounter: bigint | null = null;
-    let mfaIsValid = true;
-
-    if (user?.mfaEnabled) {
-      matchedMfaCounter = body.mfaCode && user.mfaSecretEncrypted
-        ? verifyTotp(user.mfaSecretEncrypted, body.mfaCode)
-        : null;
-      mfaIsValid = matchedMfaCounter !== null && (user.mfaLastUsedCounter === null || matchedMfaCounter > user.mfaLastUsedCounter);
-    } else if (hasPrivilegedRole) {
-      mfaIsValid = false;
-    }
-
-    if (!passwordIsValid || !accountIsValid || !mfaIsValid || !user) {
+    if (!passwordIsValid || !accountIsValid || !user) {
       await this.recordAuthenticationFailure(keys, user?.id);
       throw authenticationFailure();
     }
 
+    if (!body.challengeToken || !body.emailCode) {
+      if (!this.emailDelivery.isEmailDeliveryConfigured()) {
+        throw new ServiceUnavailableException({
+          code: "LOGIN_EMAIL_NOT_CONFIGURED",
+          message: "Email verification is not configured. Contact the system administrator.",
+        });
+      }
+      const challengeToken = createSessionToken();
+      const code = createEmailVerificationCode();
+      const challenge = await this.prisma.loginVerificationCode.create({
+        data: {
+          userId: user.id,
+          tokenHash: hashSessionToken(challengeToken),
+          codeHash: hashEmailVerificationCode(code),
+          mode,
+          rememberMe: body.rememberMe ?? false,
+          expiresAt: new Date(Date.now() + LOGIN_CODE_DURATION_MS),
+        },
+        select: { id: true },
+      });
+      try {
+        await this.emailDelivery.sendLoginVerificationCode(user.email, code);
+      } catch {
+        await this.prisma.$transaction([
+          this.prisma.loginVerificationCode.updateMany({ where: { id: challenge.id, usedAt: null }, data: { usedAt: new Date() } }),
+          this.prisma.auditEvent.create({
+            data: { actorUserId: user.id, action: "auth.login_code_delivery_failed", resourceType: "login_verification", resourceId: challenge.id, metadata: { loginMode: mode } as Prisma.InputJsonObject },
+          }),
+        ]);
+        throw new ServiceUnavailableException("Email verification could not be sent. Try again later.");
+      }
+      await this.prisma.auditEvent.create({
+        data: { actorUserId: user.id, action: "auth.login_code_sent", resourceType: "login_verification", resourceId: challenge.id, metadata: { loginMode: mode } as Prisma.InputJsonObject },
+      });
+      response.statusCode = 202;
+      return {
+        requiresEmailCode: true,
+        challengeToken,
+        emailHint: maskEmail(user.email),
+        expiresInSeconds: LOGIN_CODE_DURATION_MS / 1000,
+      };
+    }
+
+    const challenge = await this.prisma.loginVerificationCode.findUnique({
+      where: { tokenHash: hashSessionToken(body.challengeToken) },
+      select: { id: true, userId: true, codeHash: true, mode: true, rememberMe: true, failedAttempts: true, expiresAt: true, usedAt: true },
+    });
+    if (!challenge || challenge.userId !== user.id || challenge.mode !== mode || challenge.usedAt || challenge.expiresAt <= now || challenge.failedAttempts >= MAX_LOGIN_CODE_ATTEMPTS) {
+      await this.recordAuthenticationFailure(keys, user.id);
+      throw authenticationFailure();
+    }
+
+    if (!verifyEmailVerificationCode(body.emailCode, challenge.codeHash)) {
+      await this.prisma.loginVerificationCode.updateMany({
+        where: { id: challenge.id, usedAt: null, expiresAt: { gt: now }, failedAttempts: { lt: MAX_LOGIN_CODE_ATTEMPTS } },
+        data: { failedAttempts: { increment: 1 } },
+      });
+      await this.recordAuthenticationFailure(keys, user.id);
+      throw authenticationFailure();
+    }
+
     const rawToken = createSessionToken();
-    const expiresAt = new Date(Date.now() + (body.rememberMe ? REMEMBERED_SESSION_DURATION_MS : SESSION_DURATION_MS));
+    const expiresAt = new Date(Date.now() + (challenge.rememberMe ? REMEMBERED_SESSION_DURATION_MS : SESSION_DURATION_MS));
     const userAgent = getHeader(request, "user-agent")?.slice(0, 512) ?? null;
     const session = await this.prisma.$transaction(async (transaction) => {
-      if (matchedMfaCounter !== null) {
-        const consumed = await transaction.user.updateMany({
-          where: {
-            id: user.id,
-            OR: [
-              { mfaLastUsedCounter: null },
-              { mfaLastUsedCounter: { lt: matchedMfaCounter } },
-            ],
-          },
-          data: { mfaLastUsedCounter: matchedMfaCounter },
-        });
-        if (consumed.count !== 1) return null;
-      }
+      const consumed = await transaction.loginVerificationCode.updateMany({
+        where: { id: challenge.id, userId: user.id, mode, codeHash: challenge.codeHash, usedAt: null, expiresAt: { gt: now }, failedAttempts: { lt: MAX_LOGIN_CODE_ATTEMPTS } },
+        data: { usedAt: now },
+      });
+      if (consumed.count !== 1) return null;
 
       const created = await transaction.session.create({
         data: {
@@ -153,7 +214,7 @@ export class AuthController {
           action: "auth.login_succeeded",
           resourceType: "session",
           resourceId: created.id,
-          metadata: { membershipCount: user.memberships.length, loginMode: mode, mfaVerified: user.mfaEnabled } as Prisma.InputJsonObject,
+          metadata: { membershipCount: user.memberships.length, loginMode: mode, emailCodeVerified: true } as Prisma.InputJsonObject,
         },
       });
       await transaction.authRateLimit.deleteMany({ where: { keyHash: { in: keys } } });
@@ -500,4 +561,10 @@ export class AuthController {
     const secure = process.env.NODE_ENV === "production" ? "; Secure" : "";
     return `${sessionCookieName()}=; HttpOnly; Path=/; SameSite=Strict; Max-Age=0${secure}`;
   }
+}
+
+function maskEmail(email: string): string {
+  const [local, domain] = email.split("@");
+  if (!local || !domain) return "your email address";
+  return `${local.slice(0, 1)}${"•".repeat(Math.min(Math.max(local.length - 1, 2), 6))}@${domain}`;
 }

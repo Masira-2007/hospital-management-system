@@ -4,6 +4,7 @@ import {
   createHash,
   createHmac,
   randomBytes,
+  randomInt,
   scrypt as scryptCallback,
   timingSafeEqual,
 } from "node:crypto";
@@ -91,6 +92,22 @@ export function encryptTotpSecret(secret: Buffer): string {
 export function hashRateLimitKey(value: string): string {
   const secret = process.env.AUTH_RATE_LIMIT_SECRET ?? "development-only-rate-limit-key-not-for-production";
   return createHmac("sha256", secret).update(value).digest("hex");
+}
+
+export function createEmailVerificationCode(): string {
+  return randomInt(0, 1_000_000).toString().padStart(6, "0");
+}
+
+export function hashEmailVerificationCode(code: string): string {
+  const secret = process.env.AUTH_RATE_LIMIT_SECRET ?? "development-only-rate-limit-key-not-for-production";
+  return createHmac("sha256", secret).update("jr-xpert:login-email-code:v1:").update(code).digest("hex");
+}
+
+export function verifyEmailVerificationCode(code: string, expectedHash: string): boolean {
+  if (!/^\d{6}$/.test(code) || !/^[a-f0-9]{64}$/i.test(expectedHash)) return false;
+  const actual = Buffer.from(hashEmailVerificationCode(code), "hex");
+  const expected = Buffer.from(expectedHash, "hex");
+  return timingSafeEqual(actual, expected);
 }
 
 export function verifyTotp(encryptedSecret: string, code: string, now = Date.now()): bigint | null {
