@@ -20,6 +20,81 @@ test("hospital application does not claim to send a verification email when emai
   });
 });
 
+test("parallel hospital submissions for one official email are serialized to one application", async () => {
+  const applications: Array<Record<string, unknown>> = [];
+  const lockTails = new Map<string, Promise<void>>();
+  let nextId = 1;
+  let emailsSent = 0;
+
+  async function acquireLock(key: string) {
+    const previous = lockTails.get(key) ?? Promise.resolve();
+    let unlock = () => undefined;
+    const held = new Promise<void>((resolve) => { unlock = resolve; });
+    const current = previous.then(() => held);
+    lockTails.set(key, current);
+    await previous;
+    return () => {
+      unlock();
+      if (lockTails.get(key) === current) lockTails.delete(key);
+    };
+  }
+
+  const prisma = {
+    $queryRaw: async () => [{ failedAttempts: 1 }],
+    $transaction: async (callback: (transaction: Record<string, unknown>) => Promise<unknown>) => {
+      let release: (() => void) | undefined;
+      try {
+        return await callback({
+          $queryRaw: async (query: TemplateStringsArray, ...values: unknown[]) => {
+            if (query.join("").includes("pg_advisory_xact_lock")) release = await acquireLock(String(values[0]));
+            return [];
+          },
+          hospitalApplication: {
+            findFirst: async ({ where }: { where: { officialEmail: string } }) => {
+              // Yield so an implementation that omits the lock exposes the race.
+              await Promise.resolve();
+              return applications.find((application) => application.officialEmail === where.officialEmail) ?? null;
+            },
+            create: async ({ data }: { data: Record<string, unknown> }) => {
+              const created = { id: `application-${nextId++}`, ...data };
+              applications.push(created);
+              return { id: created.id, status: created.status };
+            },
+            update: async ({ where, data }: { where: { id: string }; data: Record<string, unknown> }) => {
+              const existing = applications.find((application) => application.id === where.id)!;
+              Object.assign(existing, data);
+              return { id: existing.id, status: existing.status };
+            },
+          },
+          auditEvent: { create: async () => undefined },
+        });
+      } finally {
+        release?.();
+      }
+    },
+  };
+  const controller = new HospitalApplicationsController(prisma as never, {
+    isConfigured: () => true,
+    sendHospitalApplicationVerification: async () => { emailsSent += 1; },
+  } as never);
+  const application = {
+    hospitalName: "Example Hospital", hospitalType: "GENERAL", officialEmail: "apply@example.test",
+    contactPhone: "+911234567890", streetAddress: "123 Care Road", city: "Ahmedabad", state: "Gujarat",
+    country: "India", postalCode: "380001", bedCount: 100, branchCount: 1,
+    representativeName: "A. Representative", representativeDesignation: "Director",
+    proposedAdminName: "Hospital Admin", proposedAdminEmail: "admin@example.test", termsAccepted: true,
+  };
+
+  await Promise.all([
+    controller.submit(application as never, request),
+    controller.submit(application as never, request),
+  ]);
+
+  assert.equal(applications.length, 1);
+  assert.equal(emailsSent, 1, "duplicate submissions do not rotate an in-flight verification token");
+  assert.equal(applications[0].officialEmail, "apply@example.test");
+});
+
 test("application verification consumes a one-time token and rejects its replay", async () => {
   const token = "a".repeat(64);
   let usable = true;

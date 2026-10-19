@@ -42,7 +42,7 @@ This document tracks the user-provided master prompt. It is a scope record, not 
 | AI/operations intelligence | Approved-data assistant and operational workflows with human review | Not started; prompt content is truncated during section 19.E |
 | Integrations and API | Versioned REST/OpenAPI, realtime, gateways, analyzers, PACS, insurer and accounting adapters | Versioned NestJS health/auth/session/patient-directory/hospital-onboarding/platform APIs; OpenAPI available only outside production. Email via configured Resend; other external service adapters remain unimplemented |
 | Infrastructure | PostgreSQL, Prisma migrations, Redis/jobs, private S3-compatible files, Docker, CI/CD, monitoring, backup and environments | PostgreSQL/Redis Compose foundation; runtime pool limits; readiness endpoint; API and web deployment instructions. All 9 recorded Neon production migrations applied and API readiness returned `ready`; no backup/restore operations |
-| Quality and documentation | Unit, integration, API, end-to-end, threat/privacy review and deployment guides | 48 API unit tests, Prisma validation, API and web builds pass locally. No live PostgreSQL integration suite, end-to-end browser suite, cross-tenant proof against a non-production database, threat/privacy review or clinical/security certification |
+| Quality and documentation | Unit, integration, API, end-to-end, threat/privacy review and deployment guides | 49 API unit tests, Prisma validation and API production build pass locally; latest hospital-submission change awaits Vercel production build. No live PostgreSQL integration suite, end-to-end browser suite, cross-tenant proof against a non-production database, threat/privacy review or clinical/security certification |
 
 ## Required architecture and product constraints
 
@@ -91,7 +91,13 @@ This document tracks the user-provided master prompt. It is a scope record, not 
 - Added a Super Admin-only service-health API that reports database connectivity and whether email delivery configuration is present, without exposing credentials, raw errors or patient data.
 - Added dashboard service indicators so missing email configuration is visible to platform administrators; provider acceptance remains unverified until an email is sent.
 - Moved “Forgot password?” directly below the password field on the login form.
-- Added tests for configured/missing email status and safe degraded database status. Local API test run: 48/48 passing. Production build/deployment verification follows.
+- Added tests for configured/missing email status and safe degraded database status. API test run: 48/48 passing; Prisma validation and the Next.js/API production build passed. Commit `9eb172c` is pushed to GitHub `main` and Vercel Production deployment `3qobVrqU6Eoe3isGvmrvmeCVJte9` is Ready. Verified `/login` and `/super-admin/login` return 200, `/api/v1/health/ready` returns `ready`, `/api/v1/patients` returns 401 without a session, and the login HTML places “Forgot password?” after the password field.
+
+### 0.10.0 — Duplicate hospital application concurrency control
+
+- Serialized hospital-application submissions by normalized official email using a transaction-scoped PostgreSQL advisory lock. Duplicate parallel requests now reuse the existing pending application rather than creating multiple tenants that could later be approved independently.
+- Added an audit event for verification-link reissue and a concurrent-submission regression test.
+- Verified 49/49 API tests, Prisma schema validation, and API TypeScript production build. Production deployment follows.
 
 ### 0.7.0 — Tenant-scoped appointment scheduling API
 

@@ -36,13 +36,15 @@ export class HospitalApplicationsController {
     const now = new Date();
     const token = createSessionToken();
     const tokenHash = hashSessionToken(token);
-    const existing = await this.prisma.hospitalApplication.findFirst({
-      where: { officialEmail, status: { in: [...APPLICATION_PENDING_STATUSES] } },
-      orderBy: { createdAt: "desc" },
-      select: { id: true, status: true },
-    });
-
-    const application = await this.prisma.$transaction(async (transaction) => {
+    const submission = await this.prisma.$transaction(async (transaction) => {
+      // Serialize submissions for one official address so parallel requests cannot
+      // both observe an empty result and provision duplicate hospital applications.
+      await transaction.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${officialEmail}, 0))`;
+      const existing = await transaction.hospitalApplication.findFirst({
+        where: { officialEmail, status: { in: [...APPLICATION_PENDING_STATUSES] } },
+        orderBy: { createdAt: "desc" },
+        select: { id: true, status: true, verificationTokenHash: true, verificationExpiresAt: true },
+      });
       const data = {
         hospitalName: body.hospitalName.trim(),
         hospitalType: body.hospitalType,
@@ -65,13 +67,26 @@ export class HospitalApplicationsController {
       };
 
       if (existing?.status === "EMAIL_PENDING") {
-        return transaction.hospitalApplication.update({
+        // A still-valid link is already being delivered; duplicate submissions must
+        // not rotate its token while the earlier email is in flight.
+        if (existing.verificationTokenHash && existing.verificationExpiresAt && existing.verificationExpiresAt > now) {
+          return { application: existing, verificationToken: null };
+        }
+        const updated = await transaction.hospitalApplication.update({
           where: { id: existing.id },
           data: { ...data, verificationTokenHash: tokenHash, verificationExpiresAt: new Date(now.getTime() + VERIFICATION_LIFETIME_MS) },
           select: { id: true, status: true },
         });
+        await transaction.auditEvent.create({
+          data: {
+            action: "hospital.application_verification_resent",
+            resourceType: "hospital_application",
+            resourceId: updated.id,
+          },
+        });
+        return { application: updated, verificationToken: token };
       }
-      if (existing) return existing;
+      if (existing) return { application: existing, verificationToken: null };
 
       const created = await transaction.hospitalApplication.create({
         data: {
@@ -90,23 +105,23 @@ export class HospitalApplicationsController {
           metadata: { hospitalType: body.hospitalType, bedCount: body.bedCount, branchCount: body.branchCount } as Prisma.InputJsonObject,
         },
       });
-      return created;
+      return { application: created, verificationToken: token };
     });
 
-    if (application.status === "EMAIL_PENDING") {
+    if (submission.verificationToken) {
       try {
-        await this.emailDelivery.sendHospitalApplicationVerification(officialEmail, token);
+        await this.emailDelivery.sendHospitalApplicationVerification(officialEmail, submission.verificationToken);
       } catch {
         await this.prisma.$transaction([
           this.prisma.hospitalApplication.updateMany({
-            where: { id: application.id, verificationTokenHash: tokenHash },
+            where: { id: submission.application.id, verificationTokenHash: tokenHash },
             data: { verificationTokenHash: null, verificationExpiresAt: null },
           }),
           this.prisma.auditEvent.create({
             data: {
               action: "hospital.application_verification_delivery_failed",
               resourceType: "hospital_application",
-              resourceId: application.id,
+              resourceId: submission.application.id,
               metadata: { provider: "resend" } as Prisma.InputJsonObject,
             },
           }),
@@ -118,7 +133,7 @@ export class HospitalApplicationsController {
       }
     }
 
-    return { message: "If the application can be accepted, verification instructions will be sent to the official email." };
+    return { message: "If the application can be accepted, verification instructions will be sent if needed." };
   }
 
   @Post("verify-email")
