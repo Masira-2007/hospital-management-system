@@ -36,6 +36,23 @@ export class PlatformController {
     };
   }
 
+  @Get("system-health")
+  @ApiOperation({ summary: "Read safe service-health and email-configuration indicators" })
+  async systemHealth() {
+    let database: "connected" | "unavailable" = "connected";
+    try {
+      await this.prisma.$queryRaw`SELECT 1 AS ready`;
+    } catch {
+      database = "unavailable";
+    }
+    const emailDelivery = this.emailDelivery.isConfigured() ? "configured" : "needs_setup";
+    return {
+      status: database === "connected" && emailDelivery === "configured" ? "operational" : "degraded",
+      checks: { database, emailDelivery },
+      checkedAt: new Date().toISOString(),
+    };
+  }
+
   @Get("hospitals")
   @ApiOperation({ summary: "List hospital-level platform metadata without patient records" })
   async listHospitals(@Query() query: PlatformHospitalQueryDto) {

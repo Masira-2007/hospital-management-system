@@ -18,6 +18,7 @@ type PlatformAuditEvent = {
   actor: { displayName: string } | null; organization: { id: string; name: string } | null;
 };
 type PlatformAuditPagination = { page: number; pageSize: number; total: number; pages: number };
+type PlatformSystemHealth = { status: "operational" | "degraded"; checks: { database: "connected" | "unavailable"; emailDelivery: "configured" | "needs_setup" }; checkedAt: string };
 
 const initialApplication = {
   hospitalName: "", hospitalType: "GENERAL", officialEmail: "", contactPhone: "", website: "", streetAddress: "",
@@ -210,6 +211,7 @@ export function PlatformDashboard({ identity }: { identity: { name: string; emai
   const [auditEvents, setAuditEvents] = useState<PlatformAuditEvent[]>([]);
   const [auditPagination, setAuditPagination] = useState<PlatformAuditPagination>({ page: 1, pageSize: 25, total: 0, pages: 0 });
   const [summary, setSummary] = useState<Record<string, unknown> | null>(null);
+  const [systemHealth, setSystemHealth] = useState<PlatformSystemHealth | null>(null);
   const [selectedStatus, setSelectedStatus] = useState("PENDING_REVIEW");
   const [hospitalStatus, setHospitalStatus] = useState("");
   const [hospitalSearch, setHospitalSearch] = useState("");
@@ -231,16 +233,18 @@ export function PlatformDashboard({ identity }: { identity: { name: string; emai
         fetch(`/api/v1/platform/applications?status=${encodeURIComponent(selectedStatus)}`, { cache: "no-store" }),
         fetch(`/api/v1/platform/audit-events?${auditParams}`, { cache: "no-store" }),
       ]);
+      const healthResponse = await fetch("/api/v1/platform/system-health", { cache: "no-store" });
       const hospitalParams = new URLSearchParams({ page: "1", pageSize: "50" });
       if (hospitalStatus) hospitalParams.set("status", hospitalStatus);
       if (hospitalSearch.trim()) hospitalParams.set("search", hospitalSearch.trim());
       const hospitalList = await fetch(`/api/v1/platform/hospitals?${hospitalParams}`, { cache: "no-store" });
-      if (overview.status === 401 || applicationList.status === 401 || hospitalList.status === 401 || auditList.status === 401) { router.replace("/super-admin/login"); return; }
+      if (overview.status === 401 || applicationList.status === 401 || hospitalList.status === 401 || auditList.status === 401 || healthResponse.status === 401) { router.replace("/super-admin/login"); return; }
       if (!overview.ok || !applicationList.ok || !hospitalList.ok) throw new Error("The secure platform service could not load the dashboard.");
       const data = await overview.json() as Record<string, unknown>;
       const list = await applicationList.json() as { applications?: Array<Record<string, unknown>> };
       const hospitalData = await hospitalList.json() as { hospitals?: PlatformHospital[] };
       setSummary(data); setApplications(list.applications ?? []); setHospitals(hospitalData.hospitals ?? []);
+      setSystemHealth(healthResponse.ok ? await healthResponse.json() as PlatformSystemHealth : null);
       if (auditList.ok) {
         const auditData = await auditList.json() as { events?: PlatformAuditEvent[]; pagination?: PlatformAuditPagination };
         setAuditEvents(auditData.events ?? []);
@@ -274,6 +278,7 @@ export function PlatformDashboard({ identity }: { identity: { name: string; emai
   return <main className="platform-page"><header className="platform-header"><BrandMark/><div><span>PLATFORM CONTROL</span><strong>{identity.name}</strong><small>{identity.email}</small></div><button onClick={signOut}>Sign out</button></header>
     <section className="platform-main"><div className="platform-welcome"><div><span className="auth-eyebrow"><ShieldCheck size={14}/> SUPER ADMIN</span><h1>Hospital onboarding</h1><p>Review verified applications and provision hospital access. Clinical records are not exposed in this console.</p></div><Link href="/site">JR Xpert site <ArrowRight size={15}/></Link></div>
       <div className="platform-metrics">{metric("Applications awaiting review", (summary?.applications as Record<string, number> | undefined)?.PENDING_REVIEW ?? 0)}{metric("Active hospitals", (summary?.hospitals as Record<string, number> | undefined)?.ACTIVE ?? 0)}{metric("Provisioning hospitals", (summary?.hospitals as Record<string, number> | undefined)?.PROVISIONING ?? 0)}{metric("Active accounts", summary?.activeUsers ?? 0)}</div>
+      <section className="platform-system-health" aria-labelledby="platform-system-health-title"><div><h2 id="platform-system-health-title">Platform services</h2><p>Operational checks only; no credentials or patient information are shown.</p></div>{systemHealth ? <div className="platform-health-checks"><article><span className={`platform-status ${systemHealth.checks.database === "connected" ? "status-active" : "status-suspended"}`}>{systemHealth.checks.database === "connected" ? "CONNECTED" : "UNAVAILABLE"}</span><strong>Neon PostgreSQL</strong></article><article><span className={`platform-status ${systemHealth.checks.emailDelivery === "configured" ? "status-active" : "status-provisioning"}`}>{systemHealth.checks.emailDelivery === "configured" ? "CONFIGURED" : "NEEDS SETUP"}</span><strong>Email delivery</strong><small>Provider acceptance is checked when an email is sent.</small></article></div> : <p className="platform-health-unavailable">Service health is temporarily unavailable. Refresh the dashboard to retry.</p>}</section>
       <div className="platform-list-heading"><div><h2>Hospitals</h2><p>Manage tenant availability and inspect non-clinical account metadata.</p></div><div className="platform-hospital-tools"><label><span className="sr-only">Search hospitals</span><input aria-label="Search hospitals" placeholder="Search by hospital or organization" value={hospitalSearch} onChange={(event) => setHospitalSearch(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") void load(); }}/></label><select aria-label="Filter hospital status" value={hospitalStatus} onChange={(event) => setHospitalStatus(event.target.value)}><option value="">All statuses</option><option value="ACTIVE">Active</option><option value="SUSPENDED">Suspended</option><option value="PROVISIONING">Provisioning</option><option value="DEACTIVATED">Deactivated</option></select><button type="button" onClick={() => void load()}>Search</button></div></div>
       {hospitals.length === 0 ? <div className="platform-empty"><Building2 size={25}/><h3>No hospitals found</h3><p>Approved applications will appear here once their administrator completes secure onboarding.</p></div> : <div className="platform-hospital-table-wrap"><table className="platform-hospital-table"><thead><tr><th>HOSPITAL</th><th>ORGANIZATION</th><th>STATUS</th><th>BRANCHES</th><th>MEMBERS</th><th>PLAN</th><th>ACTION</th></tr></thead><tbody>{hospitals.map((hospital) => {
         const subscription = hospital.subscriptions[0];

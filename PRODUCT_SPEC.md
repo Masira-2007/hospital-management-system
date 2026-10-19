@@ -24,7 +24,7 @@ This document tracks the user-provided master prompt. It is a scope record, not 
 | Staff web application | Responsive, role-specific hospital workspace | Visual dashboard and fictional preview only |
 | Patient portal | Secure patient access, scheduling, reports, bills, consent and dependents | Not started |
 | Mobile apps | Android/iOS Expo app, secure storage, biometrics, push and offline state | Not started |
-| Super Admin SaaS | Tenant onboarding, subscriptions, usage, system health and support | MFA-protected onboarding dashboard, application review/decision APIs, organization/hospital/branch provisioning, invitation resend/revocation, and paginated platform audit summaries. No subscription, usage-billing, support-ticket or patient-record admin workflows |
+| Super Admin SaaS | Tenant onboarding, subscriptions, usage, system health and support | MFA-protected onboarding dashboard, application review/decision APIs, organization/hospital/branch provisioning, invitation resend/revocation, paginated platform audit summaries, and protected service-health/email-configuration indicators that expose no credentials or patient data. No subscription, usage-billing, support-ticket or patient-record admin workflows |
 | Multi-tenant core | Organizations, hospital groups, hospitals, branches, locations, tenant settings and subscriptions | Organization/hospital/branch/membership, status, role, permission, subscription, settings and patient-access-grant schema; runtime membership-verified scope; transaction-scoped forced RLS for Patient reads/inserts and Appointment reads/inserts. Nine production migrations are applied; full two-tenant isolation proof against a non-production database remains outstanding |
 | Authentication and identity | Verification, recovery, secure hashing, MFA, sessions, SSO, rate limits and device management | Login UI and same-origin BFF; hospital/patient/platform-admin mode filters; scrypt password verification; email-verified active-account check; TOTP required for privileged roles; 12-hour/30-day server-side sessions; password change, session listing/revocation, database throttling, one-use hashed reset tokens; email-verified application onboarding; hospital admin TOTP enrollment; emailed first-admin bootstrap. SSO/passkeys/device management remain unimplemented. Email requires provider setup |
 | Permissions and audit | Granular role/attribute access, scope, expiry, revocation, break-glass and reviewable audit | Role/permission tables and `patient.directory.read` permission seed; active membership and tenant status checks; patient directory scope check; append-only audit triggers; MFA-protected, paginated platform audit summaries with metadata withheld and patient-directory access trails excluded. No fine-grained clinical ABAC, approvals or break-glass |
@@ -42,7 +42,7 @@ This document tracks the user-provided master prompt. It is a scope record, not 
 | AI/operations intelligence | Approved-data assistant and operational workflows with human review | Not started; prompt content is truncated during section 19.E |
 | Integrations and API | Versioned REST/OpenAPI, realtime, gateways, analyzers, PACS, insurer and accounting adapters | Versioned NestJS health/auth/session/patient-directory/hospital-onboarding/platform APIs; OpenAPI available only outside production. Email via configured Resend; other external service adapters remain unimplemented |
 | Infrastructure | PostgreSQL, Prisma migrations, Redis/jobs, private S3-compatible files, Docker, CI/CD, monitoring, backup and environments | PostgreSQL/Redis Compose foundation; runtime pool limits; readiness endpoint; API and web deployment instructions. All 9 recorded Neon production migrations applied and API readiness returned `ready`; no backup/restore operations |
-| Quality and documentation | Unit, integration, API, end-to-end, threat/privacy review and deployment guides | 46 API unit tests, Prisma validation, API and web builds pass locally. No live PostgreSQL integration suite, end-to-end browser suite, cross-tenant proof against a non-production database, threat/privacy review or clinical/security certification |
+| Quality and documentation | Unit, integration, API, end-to-end, threat/privacy review and deployment guides | 48 API unit tests, Prisma validation, API and web builds pass locally. No live PostgreSQL integration suite, end-to-end browser suite, cross-tenant proof against a non-production database, threat/privacy review or clinical/security certification |
 
 ## Required architecture and product constraints
 
@@ -85,6 +85,13 @@ This document tracks the user-provided master prompt. It is a scope record, not 
 - Added forced Patient INSERT RLS and column-scoped runtime INSERT permission. The application runtime role cannot update or delete patient records.
 - Applied migration `20261017170000_patient_registration` to Neon and verified Patient RLS is forced, the runtime role has neither superuser nor `BYPASSRLS`, registration permission is assigned to four staff roles, and patient UPDATE/DELETE privileges are absent.
 - Verified 46/46 API unit tests, Prisma validation, API build, web TypeScript check, and the elevated Next.js production build. The public preview directory remains fictional; no patient data was inserted. Two-tenant RLS proof, authenticated browser E2E, first-admin email bootstrap, and clinical EMR workflows remain unverified or incomplete.
+
+### 0.9.0 — Platform service health and login recovery placement
+
+- Added a Super Admin-only service-health API that reports database connectivity and whether email delivery configuration is present, without exposing credentials, raw errors or patient data.
+- Added dashboard service indicators so missing email configuration is visible to platform administrators; provider acceptance remains unverified until an email is sent.
+- Moved “Forgot password?” directly below the password field on the login form.
+- Added tests for configured/missing email status and safe degraded database status. Local API test run: 48/48 passing. Production build/deployment verification follows.
 
 ### 0.7.0 — Tenant-scoped appointment scheduling API
 

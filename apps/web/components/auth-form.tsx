@@ -84,8 +84,9 @@ export function LoginForm({ superAdmin = false }: { superAdmin?: boolean }) {
         <form className="auth-form" onSubmit={submit}>
           <label className="auth-label" htmlFor="login-email">Email address</label>
           <div className="auth-input-wrap"><Mail size={18}/><input id="login-email" name="email" type="email" autoComplete="username" required maxLength={254} value={email} onChange={(event) => setEmail(event.target.value)} placeholder="Enter your email address" /></div>
-          <div className="auth-label-row"><label className="auth-label" htmlFor="login-password">Password</label><Link href="/forgot-password">Forgot password?</Link></div>
+          <label className="auth-label" htmlFor="login-password">Password</label>
           <div className="auth-input-wrap"><LockKeyhole size={18}/><input id="login-password" name="password" type={visible ? "text" : "password"} autoComplete="current-password" required minLength={12} maxLength={128} value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Enter your password"/><button className="auth-eye" type="button" onClick={() => setVisible((value) => !value)} aria-label={visible ? "Hide password" : "Show password"}>{visible ? <EyeOff size={18}/> : <Eye size={18}/>}</button></div>
+          <div className="auth-forgot-row"><Link href="/forgot-password">Forgot password?</Link></div>
           <label className="auth-label auth-mfa-label" htmlFor="login-mfa">Authenticator code <span>{superAdmin ? "required" : "if enabled for your account"}</span></label>
           <div className="auth-input-wrap"><LockKeyhole size={18}/><input id="login-mfa" name="mfaCode" type="text" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} required={superAdmin} value={mfaCode} onChange={(event) => setMfaCode(event.target.value.replace(/\D/g, ""))} placeholder="6-digit code" /></div>
           {!superAdmin && <label className="auth-remember"><input type="checkbox" checked={rememberMe} onChange={(event) => setRememberMe(event.target.checked)}/><span>Remember me on this device</span></label>}

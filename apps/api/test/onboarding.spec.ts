@@ -246,6 +246,24 @@ test("platform hospital search is paginated and returns only operational metadat
   assert.equal("patients" in result.hospitals[0], false);
 });
 
+test("platform system health reports database and email setup without exposing secrets", async () => {
+  const controller = new PlatformController({ $queryRaw: async () => [{ ready: 1 }] } as never, { isConfigured: () => false } as never);
+  const result = await controller.systemHealth();
+  assert.equal(result.status, "degraded");
+  assert.deepEqual(result.checks, { database: "connected", emailDelivery: "needs_setup" });
+  assert.ok(Number.isFinite(Date.parse(result.checkedAt)));
+  assert.equal(JSON.stringify(result).includes("RESEND_API_KEY"), false);
+  assert.equal(JSON.stringify(result).includes("DATABASE_URL"), false);
+});
+
+test("platform system health degrades safely when PostgreSQL is unavailable", async () => {
+  const controller = new PlatformController({ $queryRaw: async () => { throw new Error("database credentials leaked"); } } as never, { isConfigured: () => true } as never);
+  const result = await controller.systemHealth();
+  assert.equal(result.status, "degraded");
+  assert.deepEqual(result.checks, { database: "unavailable", emailDelivery: "configured" });
+  assert.equal(JSON.stringify(result).includes("credentials"), false);
+});
+
 test("platform audit review is paginated, scoped by safe filters, and omits event metadata", async () => {
   let findArgs: Record<string, unknown> | undefined;
   let countWhere: unknown;
