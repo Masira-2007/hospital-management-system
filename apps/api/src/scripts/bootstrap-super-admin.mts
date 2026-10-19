@@ -71,7 +71,7 @@ async function main() {
     try {
       await emailDelivery.sendPlatformBootstrap(email, rawToken);
       await prisma.auditEvent.create({ data: { organizationId: bootstrap.organizationId, action: "platform.bootstrap_invitation_sent", resourceType: "user", resourceId: bootstrap.userId } });
-      process.stdout.write("Bootstrap invitation sent. The recipient must finish password and authenticator setup using the one-time email link within 30 minutes.\n");
+      process.stdout.write("Bootstrap invitation sent. The recipient must set a password and verify the setup with a one-time email code within 30 minutes.\n");
     } catch {
       const failedAt = new Date();
       await prisma.$transaction(async (transaction) => {

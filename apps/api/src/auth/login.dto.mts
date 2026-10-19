@@ -1,4 +1,4 @@
-import { IsBoolean, IsEmail, IsIn, IsOptional, IsString, Matches, MaxLength, MinLength } from "class-validator";
+import { IsEmail, IsIn, IsOptional, IsString, Matches, MaxLength, MinLength } from "class-validator";
 
 export class LoginDto {
   @IsEmail()
@@ -13,10 +13,6 @@ export class LoginDto {
   @IsOptional()
   @IsIn(["HOSPITAL", "PATIENT", "SUPER_ADMIN"])
   mode?: "HOSPITAL" | "PATIENT" | "SUPER_ADMIN";
-
-  @IsOptional()
-  @IsBoolean()
-  rememberMe?: boolean;
 
   @IsOptional()
   @Matches(/^[a-f0-9]{64}$/i)

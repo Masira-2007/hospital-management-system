@@ -11,9 +11,7 @@ export class SuperAdminGuard implements CanActivate {
     const userId = request.authSession?.user.id;
     if (!userId) throw new UnauthorizedException("Authentication required.");
 
-    const [user, membership] = await Promise.all([
-      this.prisma.user.findUnique({ where: { id: userId }, select: { mfaEnabled: true } }),
-      this.prisma.membership.findFirst({
+    const membership = await this.prisma.membership.findFirst({
         where: {
           userId,
           role: { in: ["SUPER_ADMIN", "PLATFORM_ADMIN"] },
@@ -24,10 +22,9 @@ export class SuperAdminGuard implements CanActivate {
           organization: { is: { status: "ACTIVE" } },
         },
         select: { id: true },
-      }),
-    ]);
+      });
 
-    if (!user?.mfaEnabled || !membership) {
+    if (!membership) {
       throw new ForbiddenException("Platform administrator access is required.");
     }
     return true;

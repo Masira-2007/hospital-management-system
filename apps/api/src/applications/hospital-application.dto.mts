@@ -93,6 +93,22 @@ export class CompleteInvitationDto {
   mfaCode!: string;
 }
 
+export class CompletePlatformBootstrapDto {
+  @IsString() @Matches(/^[a-f0-9]{64}$/i)
+  token!: string;
+
+  @IsString() @Matches(/^[a-f0-9]{64}$/i)
+  challengeToken!: string;
+
+  @IsString() @Matches(/^\d{6}$/)
+  emailCode!: string;
+}
+
+export class ResendPlatformBootstrapCodeDto {
+  @IsString() @Matches(/^[a-f0-9]{64}$/i)
+  token!: string;
+}
+
 export class AcceptExistingInvitationDto {
   @IsString() @Matches(/^[a-f0-9]{64}$/i)
   token!: string;

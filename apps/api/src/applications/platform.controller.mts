@@ -8,7 +8,7 @@ import { EmailDeliveryService } from "../auth/email-delivery.service.mjs";
 import type { RequestLike } from "../auth/auth.types.mjs";
 import { createSessionToken, hashSessionToken } from "../security/security.crypto.mjs";
 import { ApplicationDecisionDto, HospitalApplicationQueryDto } from "./hospital-application.dto.mjs";
-import { HospitalStatusChangeDto, PlatformAuditQueryDto, PlatformHospitalQueryDto } from "./platform-hospital.dto.mjs";
+import { HospitalStatusChangeDto, PlatformAuditQueryDto, PlatformHospitalQueryDto, PlatformSubscriptionQueryDto } from "./platform-hospital.dto.mjs";
 
 const INVITATION_LIFETIME_MS = 72 * 60 * 60 * 1000;
 
@@ -22,16 +22,18 @@ export class PlatformController {
   @Get("dashboard")
   @ApiOperation({ summary: "Read platform-level onboarding and account counts without clinical data" })
   async dashboard() {
-    const [applications, hospitals, invitations, activeUsers] = await Promise.all([
+    const [applications, hospitals, invitations, activeUsers, subscriptions] = await Promise.all([
       this.prisma.hospitalApplication.groupBy({ by: ["status"], _count: { _all: true } }),
       this.prisma.hospital.groupBy({ by: ["status"], _count: { _all: true } }),
       this.prisma.hospitalInvitation.groupBy({ by: ["status", "deliveryStatus"], _count: { _all: true } }),
       this.prisma.user.count({ where: { status: "ACTIVE" } }),
+      this.prisma.hospitalSubscription.groupBy({ by: ["status"], _count: { _all: true } }),
     ]);
     return {
       applications: Object.fromEntries(applications.map(({ status, _count }) => [status, _count._all])),
       hospitals: Object.fromEntries(hospitals.map(({ status, _count }) => [status, _count._all])),
       invitations: invitations.map(({ status, deliveryStatus, _count }) => ({ status, deliveryStatus, count: _count._all })),
+      subscriptions: Object.fromEntries(subscriptions.map(({ status, _count }) => [status, _count._all])),
       activeUsers,
     };
   }
@@ -87,6 +89,46 @@ export class PlatformController {
       }),
     ]);
     return { hospitals, pagination: { page: query.page, pageSize: query.pageSize, total, pages: Math.ceil(total / query.pageSize) } };
+  }
+
+  @Get("subscriptions")
+  @ApiOperation({ summary: "List paginated subscription and tenant operations metadata without clinical or payment data" })
+  async listSubscriptions(@Query() query: PlatformSubscriptionQueryDto) {
+    const search = query.search?.trim();
+    const where: Prisma.HospitalSubscriptionWhereInput = {
+      ...(query.status ? { status: query.status } : {}),
+      ...(search ? {
+        hospital: { is: {
+          OR: [
+            { name: { contains: search, mode: "insensitive" } },
+            { slug: { contains: search, mode: "insensitive" } },
+            { organization: { is: { name: { contains: search, mode: "insensitive" } } } },
+          ],
+        } },
+      } : {}),
+    };
+    const skip = (query.page - 1) * query.pageSize;
+    const [total, subscriptions] = await Promise.all([
+      this.prisma.hospitalSubscription.count({ where }),
+      this.prisma.hospitalSubscription.findMany({
+        where,
+        orderBy: [{ currentPeriodEnd: "asc" }, { id: "asc" }],
+        skip,
+        take: query.pageSize,
+        select: {
+          id: true, status: true, trialEndsAt: true, currentPeriodStart: true, currentPeriodEnd: true, canceledAt: true,
+          plan: { select: { code: true, name: true, active: true } },
+          hospital: {
+            select: {
+              id: true, name: true, slug: true,
+              organization: { select: { id: true, name: true, status: true } },
+              _count: { select: { branches: true, memberships: true } },
+            },
+          },
+        },
+      }),
+    ]);
+    return { subscriptions, pagination: { page: query.page, pageSize: query.pageSize, total, pages: Math.ceil(total / query.pageSize) } };
   }
 
   @Get("audit-events")

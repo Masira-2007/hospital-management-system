@@ -6,7 +6,7 @@ import { hashEmailVerificationCode, hashPassword } from "../src/security/securit
 
 const request = { headers: { "user-agent": "unit-test" }, ip: "127.0.0.1" };
 
-test("patient login sends a one-time email code and creates a persistent session only after code verification", async () => {
+test("patient login sends a one-time email code and creates a 12-hour session only after code verification", async () => {
   const passwordHash = await hashPassword("correct horse battery 927!");
   let createdSession: Record<string, unknown> | undefined;
   let cookie = "";
@@ -61,7 +61,7 @@ test("patient login sends a one-time email code and creates a persistent session
   } as never);
 
   const firstResponse = await controller.login(
-    { email: " PATIENT@example.test ", password: "correct horse battery 927!", mode: "PATIENT", rememberMe: true },
+    { email: " PATIENT@example.test ", password: "correct horse battery 927!", mode: "PATIENT" },
     request,
     { setHeader: (_name, value) => { cookie = value; } },
   );
@@ -70,7 +70,7 @@ test("patient login sends a one-time email code and creates a persistent session
   assert.equal(cookie, "");
 
   const response = await controller.login(
-    { email: "patient@example.test", password: "correct horse battery 927!", mode: "PATIENT", rememberMe: true, challengeToken: firstResponse.challengeToken, emailCode: sentCode },
+    { email: "patient@example.test", password: "correct horse battery 927!", mode: "PATIENT", challengeToken: firstResponse.challengeToken, emailCode: sentCode },
     request,
     { setHeader: (_name, value) => { cookie = value; } },
   );
@@ -81,7 +81,8 @@ test("patient login sends a one-time email code and creates a persistent session
   assert.ok(storedChallenge?.usedAt);
   assert.equal(typeof createdSession?.tokenHash, "string");
   assert.notEqual(createdSession?.tokenHash, cookie.match(/=([a-f0-9]{64})/)?.[1]);
-  assert.ok((createdSession?.expiresAt as Date).getTime() - Date.now() > 29 * 24 * 60 * 60 * 1000);
+  const remainingSessionMs = (createdSession?.expiresAt as Date).getTime() - Date.now();
+  assert.ok(remainingSessionMs > 11 * 60 * 60 * 1000 && remainingSessionMs <= 12 * 60 * 60 * 1000);
   assert.match(cookie, /^jrxpert_session=[a-f0-9]{64}; HttpOnly; Path=\/; SameSite=Strict; Max-Age=/);
 });
 

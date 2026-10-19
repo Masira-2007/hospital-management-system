@@ -8,7 +8,7 @@
     "start:dev": "tsx watch src/main.mts",
     "build": "prisma generate && tsc -p tsconfig.build.json",
     "start": "node dist/main.mjs",
-    "test": "tsx --test test/health.spec.ts test/security.spec.ts test/tenant-membership.spec.ts test/patients.spec.ts test/appointments.spec.ts test/patient-registration.spec.ts test/authentication.spec.ts test/onboarding.spec.ts test/oauth.spec.ts",
+    "test": "tsx --test test/health.spec.ts test/security.spec.ts test/tenant-membership.spec.ts test/patients.spec.ts test/appointments.spec.ts test/patient-registration.spec.ts test/authentication.spec.ts test/onboarding.spec.ts",
     "db:generate": "prisma generate",
     "db:validate": "prisma validate",
     "db:migrate:dev": "prisma migrate dev",
@@ -26,8 +26,6 @@
     "class-validator": "^0.14.2",
     "dotenv": "^17.2.3",
     "helmet": "^8.1.0",
-    "jose": "^6.2.12",
-    "openid-client": "^6.8.8",
     "pg": "^8.16.3",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.2"

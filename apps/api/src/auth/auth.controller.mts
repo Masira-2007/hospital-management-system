@@ -35,11 +35,8 @@ import { PasswordResetDto, PasswordResetRequestDto } from "./password-reset.dto.
 import { EmailDeliveryService } from "./email-delivery.service.mjs";
 import { getHeader, type RequestLike, type ResponseLike } from "./auth.types.mjs";
 import { SessionAuthGuard, sessionCookieName } from "./session-auth.guard.mjs";
-import { OAuthService } from "./oauth.service.mjs";
-import { OAuthStartDto, OAuthCallbackDto } from "./oauth.dto.mjs";
 
 const SESSION_DURATION_MS = 12 * 60 * 60 * 1000;
-const REMEMBERED_SESSION_DURATION_MS = 30 * 24 * 60 * 60 * 1000;
 const PASSWORD_RESET_DURATION_MS = 20 * 60 * 1000;
 const LOGIN_CODE_DURATION_MS = 10 * 60 * 1000;
 const MAX_LOGIN_CODE_ATTEMPTS = 5;
@@ -58,27 +55,7 @@ export class AuthController {
   constructor(
     private readonly prisma: PrismaService,
     private readonly emailDelivery: EmailDeliveryService,
-    private readonly oauth: OAuthService = null!,
   ) {}
-
-  @Post("oauth/:provider/start")
-  @HttpCode(200)
-  @ApiOperation({ summary: "Start a state-, nonce-, and PKCE-protected Google or Apple sign-in" })
-  async startOAuth(@Param("provider") provider: string, @Body() body: OAuthStartDto, @Req() request: RequestLike) {
-    return this.oauth.start(provider as "google" | "apple", body, request);
-  }
-
-  @Post("oauth/:provider/callback")
-  @HttpCode(200)
-  @ApiOperation({ summary: "Verify an OAuth callback and create a session for an existing authorized account" })
-  async finishOAuth(
-    @Param("provider") provider: string,
-    @Body() body: OAuthCallbackDto,
-    @Req() request: RequestLike,
-    @Res({ passthrough: true }) response: ResponseLike,
-  ) {
-    return this.oauth.callback(provider as "google" | "apple", body, request, response);
-  }
 
   @Post("login")
   @HttpCode(200)
@@ -143,7 +120,6 @@ export class AuthController {
           tokenHash: hashSessionToken(challengeToken),
           codeHash: hashEmailVerificationCode(code),
           mode,
-          rememberMe: body.rememberMe ?? false,
           expiresAt: new Date(Date.now() + LOGIN_CODE_DURATION_MS),
         },
         select: { id: true },
@@ -173,7 +149,7 @@ export class AuthController {
 
     const challenge = await this.prisma.loginVerificationCode.findUnique({
       where: { tokenHash: hashSessionToken(body.challengeToken) },
-      select: { id: true, userId: true, codeHash: true, mode: true, rememberMe: true, failedAttempts: true, expiresAt: true, usedAt: true },
+      select: { id: true, userId: true, codeHash: true, mode: true, failedAttempts: true, expiresAt: true, usedAt: true },
     });
     if (!challenge || challenge.userId !== user.id || challenge.mode !== mode || challenge.usedAt || challenge.expiresAt <= now || challenge.failedAttempts >= MAX_LOGIN_CODE_ATTEMPTS) {
       await this.recordAuthenticationFailure(keys, user.id);
@@ -190,7 +166,7 @@ export class AuthController {
     }
 
     const rawToken = createSessionToken();
-    const expiresAt = new Date(Date.now() + (challenge.rememberMe ? REMEMBERED_SESSION_DURATION_MS : SESSION_DURATION_MS));
+    const expiresAt = new Date(Date.now() + SESSION_DURATION_MS);
     const userAgent = getHeader(request, "user-agent")?.slice(0, 512) ?? null;
     const session = await this.prisma.$transaction(async (transaction) => {
       const consumed = await transaction.loginVerificationCode.updateMany({

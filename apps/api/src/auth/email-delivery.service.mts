@@ -18,9 +18,9 @@ export class EmailDeliveryService {
   async sendLoginVerificationCode(recipient: string, code: string): Promise<void> {
     await this.sendEmail({
       recipient,
-      subject: "Your JR Xpert HMS sign-in code",
-      text: `Your one-time JR Xpert HMS sign-in code is ${code}. It expires in 10 minutes. Do not share this code with anyone. If you did not try to sign in, you can ignore this email.`,
-      html: `<p>Your one-time JR Xpert HMS sign-in code is:</p><p style="font-size:24px;font-weight:bold;letter-spacing:6px">${code}</p><p>It expires in 10 minutes. Do not share this code with anyone. If you did not try to sign in, you can ignore this email.</p>`,
+      subject: "Your JR Xpert HMS verification code",
+      text: `Your one-time JR Xpert HMS verification code is ${code}. It expires in 10 minutes. Do not share this code with anyone. If you did not request it, you can ignore this email.`,
+      html: `<p>Your one-time JR Xpert HMS verification code is:</p><p style="font-size:24px;font-weight:bold;letter-spacing:6px">${code}</p><p>It expires in 10 minutes. Do not share this code with anyone. If you did not request it, you can ignore this email.</p>`,
     });
   }
 
@@ -90,8 +90,8 @@ export class EmailDeliveryService {
     await this.sendEmail({
       recipient,
       subject: "Set up your JR Xpert HMS platform administrator account",
-      text: `Use this one-time link to set your platform administrator password and enroll an authenticator. It expires in 30 minutes.\n\n${url}\n\nIf you did not initiate this setup, contact JR Xpert support immediately.`,
-      html: `<p>Use this one-time link to set your platform administrator password and enroll an authenticator. It expires in 30 minutes.</p><p><a href="${url}">Secure your administrator account</a></p><p>If you did not initiate this setup, contact JR Xpert support immediately.</p>`,
+      text: `Use this one-time link to set your platform administrator password. You will verify the setup with a one-time code sent to this email address. The link expires in 30 minutes.\n\n${url}\n\nIf you did not initiate this setup, contact JR Xpert support immediately.`,
+      html: `<p>Use this one-time link to set your platform administrator password. You will verify the setup with a one-time code sent to this email address. The link expires in 30 minutes.</p><p><a href="${url}">Secure your administrator account</a></p><p>If you did not initiate this setup, contact JR Xpert support immediately.</p>`,
     });
   }
 

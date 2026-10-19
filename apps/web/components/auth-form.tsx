@@ -16,27 +16,9 @@ export function LoginForm({ superAdmin = false }: { superAdmin?: boolean }) {
   const [challengeToken, setChallengeToken] = useState("");
   const [emailCode, setEmailCode] = useState("");
   const [emailHint, setEmailHint] = useState("");
-  const [rememberMe, setRememberMe] = useState(false);
   const [visible, setVisible] = useState(false);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
-
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const outcome = params.get("oauth");
-    const returnedMode = params.get("mode");
-    const provider = params.get("provider") === "apple" ? "Apple" : "Google";
-    if (!superAdmin && (returnedMode === "HOSPITAL" || returnedMode === "PATIENT")) setMode(returnedMode);
-    if (outcome === "unavailable") setMessage(`${provider} sign-in is not configured yet. Contact the system administrator.`);
-    if (outcome === "error") setMessage("We couldn’t verify that sign-in. Please try again or use your password and email code.");
-    if (outcome) {
-      params.delete("oauth");
-      params.delete("provider");
-      params.delete("mode");
-      const query = params.toString();
-      window.history.replaceState(null, "", `${window.location.pathname}${query ? `?${query}` : ""}${window.location.hash}`);
-    }
-  }, [superAdmin]);
 
   async function requestEmailCode() {
     setBusy(true);
@@ -46,7 +28,7 @@ export function LoginForm({ superAdmin = false }: { superAdmin?: boolean }) {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "same-origin",
-        body: JSON.stringify({ email, password, mode, rememberMe }),
+        body: JSON.stringify({ email, password, mode }),
       });
       const result = await response.json().catch(() => null) as { requiresEmailCode?: boolean; challengeToken?: string; emailHint?: string; message?: string | string[] } | null;
       if (!response.ok) {
@@ -81,7 +63,7 @@ export function LoginForm({ superAdmin = false }: { superAdmin?: boolean }) {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "same-origin",
-        body: JSON.stringify({ email, password, mode, rememberMe, challengeToken, emailCode }),
+        body: JSON.stringify({ email, password, mode, challengeToken, emailCode }),
       });
       if (!response.ok) {
         const result = await response.json().catch(() => null) as { message?: string | string[] } | null;
@@ -96,11 +78,6 @@ export function LoginForm({ superAdmin = false }: { superAdmin?: boolean }) {
     } finally {
       setBusy(false);
     }
-  }
-
-  function beginExternalSignIn(provider: "google" | "apple") {
-    const params = new URLSearchParams({ mode, rememberMe: String(rememberMe) });
-    window.location.assign(`/api/auth/oauth/${provider}?${params.toString()}`);
   }
 
   return <main className="auth-page">
@@ -151,21 +128,9 @@ export function LoginForm({ superAdmin = false }: { superAdmin?: boolean }) {
             <div className="auth-input-wrap"><Mail size={18}/><input id="login-email-code" name="emailCode" type="text" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} required value={emailCode} onChange={(event) => setEmailCode(event.target.value.replace(/\D/g, ""))} placeholder="Enter the 6-digit code" /></div>
             <div className="auth-code-actions"><button type="button" onClick={() => void requestEmailCode()} disabled={busy}>Resend code</button><button type="button" onClick={() => { setChallengeToken(""); setEmailCode(""); setEmailHint(""); setMessage(""); }}>Use a different account</button></div>
           </>}
-          {!superAdmin && <label className="auth-remember"><input type="checkbox" checked={rememberMe} onChange={(event) => setRememberMe(event.target.checked)}/><span>Remember me on this device</span></label>}
           {message && <p className="auth-message" role="alert">{message}</p>}
           <button className="auth-submit" type="submit" disabled={busy || Boolean(challengeToken && emailCode.length !== 6)}>{busy ? <><LoaderCircle size={18} className="auth-spin"/> {challengeToken ? "Verifying code…" : "Sending code…"}</> : <>{challengeToken ? "Verify code & sign in" : "Send email code"} <ArrowRight size={18}/></>}</button>
         </form>
-        <div className="auth-social-divider"><span>or continue with</span></div>
-        <div className="auth-social-buttons">
-          <button type="button" onClick={() => beginExternalSignIn("google")} disabled={busy}>
-            <span className="auth-google-mark" aria-hidden="true">G</span> Continue with Google
-          </button>
-          <button type="button" onClick={() => beginExternalSignIn("apple")} disabled={busy}>
-            <svg className="auth-apple-mark" viewBox="0 0 24 24" aria-hidden="true"><path d="M16.37 12.57c.02 2.3 2.02 3.07 2.04 3.08-.02.06-.32 1.1-1.05 2.18-.63.94-1.29 1.87-2.33 1.89-1.02.02-1.35-.61-2.52-.61s-1.54.59-2.51.63c-1 .04-1.77-1.01-2.41-1.94-1.31-1.89-2.31-5.34-.97-7.66a3.72 3.72 0 0 1 3.14-1.91c.98-.02 1.9.66 2.5.66.6 0 1.73-.82 2.91-.7.49.02 1.87.2 2.76 1.51-.07.04-1.65.96-1.63 2.87ZM14.46 6.93a3.65 3.65 0 0 0 .84-2.61 3.72 3.72 0 0 0-2.4 1.23 3.44 3.44 0 0 0-.86 2.53 3.1 3.1 0 0 0 2.42-1.15Z"/></svg>
-            Continue with Apple
-          </button>
-        </div>
-        <p className="auth-provider-note">External sign-in works for existing verified accounts; it does not create a new account.</p>
         <p className="auth-help">{superAdmin ? "Platform administrator access is invitation-only." : <>Need access? <Link href="/register-hospital">Register a hospital</Link> or contact your administrator.</>}</p>
         <div className="auth-panel-footer"><Link href="/site"><ArrowLeft size={14}/> About JR Xpert HMS</Link><span>Better Care. Smarter Management. Healthier Tomorrow.</span></div>
       </div>

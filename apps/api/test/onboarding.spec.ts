@@ -5,9 +5,9 @@ import { HospitalApplicationsController } from "../src/applications/hospital-app
 import { HospitalInvitationsController } from "../src/applications/hospital-invitations.controller.mjs";
 import { PlatformBootstrapController } from "../src/applications/platform-bootstrap.controller.mjs";
 import { PlatformController } from "../src/applications/platform.controller.mjs";
-import { PlatformAuditQueryDto, PlatformHospitalQueryDto } from "../src/applications/platform-hospital.dto.mjs";
+import { PlatformAuditQueryDto, PlatformHospitalQueryDto, PlatformSubscriptionQueryDto } from "../src/applications/platform-hospital.dto.mjs";
 import { SuperAdminGuard } from "../src/auth/super-admin.guard.mjs";
-import { hashSessionToken } from "../src/security/security.crypto.mjs";
+import { hashEmailVerificationCode, hashSessionToken } from "../src/security/security.crypto.mjs";
 
 const request = { headers: { origin: "http://localhost:3000" }, ip: "127.0.0.1" };
 
@@ -186,20 +186,57 @@ test("concurrent hospital invitation setup can claim the preparation token only 
   assert.equal(userCreated, false);
 });
 
-test("first platform admin cannot be activated without a valid MFA code", async () => {
-  let mutations = 0;
+test("first platform admin bootstrap rejects an invalid email verification code", async () => {
+  let failedAttempts = 0;
+  const challengeToken = "h".repeat(64);
+  const challenge = { id: "code-1", userId: "admin-1", tokenHash: hashSessionToken(challengeToken), codeHash: hashEmailVerificationCode("654321"), mode: "SUPER_ADMIN_BOOTSTRAP", failedAttempts: 0, expiresAt: new Date(Date.now() + 60_000), usedAt: null };
   const prisma = {
     $queryRaw: async () => [{ failedAttempts: 1 }],
     platformBootstrapToken: { findUnique: async () => ({
       id: "bootstrap-1", userId: "admin-1", tokenHash: hashSessionToken("c".repeat(64)), expiresAt: new Date(Date.now() + 60_000), preparedAt: new Date(), usedAt: null,
-      user: { id: "admin-1", status: "INVITED", mfaEnabled: false, mfaSecretEncrypted: "invalid-encrypted-secret", mfaLastUsedCounter: null },
+      user: { id: "admin-1", status: "INVITED", mfaEnabled: false },
     }) },
     membership: { findFirst: async () => ({ id: "membership-1", organizationId: "org-platform" }) },
-    $transaction: async () => { mutations += 1; },
+    loginVerificationCode: {
+      findUnique: async () => challenge,
+      updateMany: async () => { failedAttempts += 1; return { count: 1 }; },
+    },
+    auditEvent: { create: async () => undefined },
+    $transaction: async (operations: unknown[]) => { assert.equal(operations.length, 2); },
   };
-  const controller = new PlatformBootstrapController(prisma as never);
-  await assert.rejects(() => controller.complete({ token: "c".repeat(64), mfaCode: "123456" }, request), (error: unknown) => error instanceof ForbiddenException);
-  assert.equal(mutations, 0);
+  const controller = new PlatformBootstrapController(prisma as never, { isEmailDeliveryConfigured: () => true } as never);
+  await assert.rejects(() => controller.complete({ token: "c".repeat(64), challengeToken, emailCode: "123456" }, request), (error: unknown) => error instanceof ForbiddenException);
+  assert.equal(failedAttempts, 1);
+});
+
+test("first platform admin is activated by one email code and does not need TOTP setup", async () => {
+  const challengeToken = "i".repeat(64);
+  const challenge = { id: "code-2", userId: "admin-1", tokenHash: hashSessionToken(challengeToken), codeHash: hashEmailVerificationCode("123456"), mode: "SUPER_ADMIN_BOOTSTRAP", failedAttempts: 0, expiresAt: new Date(Date.now() + 60_000), usedAt: null };
+  let userUpdate: Record<string, unknown> | undefined;
+  let membershipActivated = false;
+  const prisma = {
+    $queryRaw: async () => [{ failedAttempts: 1 }],
+    platformBootstrapToken: { findUnique: async () => ({
+      id: "bootstrap-2", userId: "admin-1", tokenHash: hashSessionToken("j".repeat(64)), expiresAt: new Date(Date.now() + 60_000), preparedAt: new Date(), usedAt: null,
+      user: { id: "admin-1", status: "INVITED", mfaEnabled: false },
+    }) },
+    membership: { findFirst: async () => ({ id: "membership-2", organizationId: "org-platform" }) },
+    loginVerificationCode: { findUnique: async () => challenge },
+    $transaction: async (callback: (transaction: Record<string, unknown>) => Promise<unknown>) => callback({
+      loginVerificationCode: { updateMany: async () => ({ count: 1 }) },
+      platformBootstrapToken: { updateMany: async () => ({ count: 1 }) },
+      user: { updateMany: async ({ data }: { data: Record<string, unknown> }) => { userUpdate = data; return { count: 1 }; } },
+      membership: { updateMany: async () => { membershipActivated = true; return { count: 1 }; } },
+      auditEvent: { create: async () => undefined },
+    }),
+  };
+  const controller = new PlatformBootstrapController(prisma as never, { isEmailDeliveryConfigured: () => true } as never);
+  const result = await controller.complete({ token: "j".repeat(64), challengeToken, emailCode: "123456" }, request);
+  assert.match(result.message, /one-time code sent to your email/);
+  assert.equal(userUpdate?.status, "ACTIVE");
+  assert.equal(userUpdate?.mfaEnabled, false);
+  assert.equal(userUpdate?.mfaSecretEncrypted, null);
+  assert.equal(membershipActivated, true);
 });
 
 test("first platform admin bootstrap setup link cannot be prepared twice", async () => {
@@ -212,7 +249,7 @@ test("first platform admin bootstrap setup link cannot be prepared twice", async
     }) },
     $transaction: async () => { transactions += 1; },
   };
-  const controller = new PlatformBootstrapController(prisma as never);
+  const controller = new PlatformBootstrapController(prisma as never, { isEmailDeliveryConfigured: () => true } as never);
   await assert.rejects(() => controller.prepare({ token: "f".repeat(64), displayName: "Platform Admin", password: "a strong password 928!" }, request), (error: unknown) => error instanceof BadRequestException);
   assert.equal(transactions, 0);
 });
@@ -232,15 +269,8 @@ test("concurrent first-admin setup can claim its preparation token only once", a
       user: { update: async () => { userUpdated = true; } },
     }),
   };
-  const controller = new PlatformBootstrapController(prisma as never);
-  const previousKey = process.env.MFA_ENCRYPTION_KEY;
-  process.env.MFA_ENCRYPTION_KEY = "cd".repeat(32);
-  try {
-    await assert.rejects(() => controller.prepare({ token: "g".repeat(64), displayName: "Platform Admin", password: "a strong password 928!" }, request), (error: unknown) => error instanceof BadRequestException);
-  } finally {
-    if (previousKey === undefined) delete process.env.MFA_ENCRYPTION_KEY;
-    else process.env.MFA_ENCRYPTION_KEY = previousKey;
-  }
+  const controller = new PlatformBootstrapController(prisma as never, { isEmailDeliveryConfigured: () => true } as never);
+  await assert.rejects(() => controller.prepare({ token: "g".repeat(64), displayName: "Platform Admin", password: "a strong password 928!" }, request), (error: unknown) => error instanceof BadRequestException);
   const claim = claimWhere as { id: string; usedAt: Date | null; preparedAt: Date | null; expiresAt: { gt: Date } };
   assert.equal(claim.id, "bootstrap-1");
   assert.equal(claim.usedAt, null);
@@ -249,13 +279,14 @@ test("concurrent first-admin setup can claim its preparation token only once", a
   assert.equal(userUpdated, false);
 });
 
-test("platform routes require MFA and an active platform-scoped administrator membership", async () => {
+test("platform routes accept an email-code-authenticated admin without requiring an authenticator app", async () => {
+  let roleLookup = false;
   const guard = new SuperAdminGuard({
-    user: { findUnique: async () => ({ mfaEnabled: true }) },
-    membership: { findFirst: async () => null },
+    membership: { findFirst: async () => { roleLookup = true; return { id: "membership-1" }; } },
   } as never);
   const context = { switchToHttp: () => ({ getRequest: () => ({ authSession: { user: { id: "user-1" } } }) }) } as never;
-  await assert.rejects(() => guard.canActivate(context), (error: unknown) => error instanceof ForbiddenException);
+  assert.equal(await guard.canActivate(context), true);
+  assert.equal(roleLookup, true);
 });
 
 test("hospital suspension is audited and repeated requests are idempotent", async () => {
@@ -319,6 +350,51 @@ test("platform hospital search is paginated and returns only operational metadat
   assert.equal(result.pagination.pages, 1);
   assert.equal(result.hospitals[0].name, "North Clinic");
   assert.equal("patients" in result.hospitals[0], false);
+});
+
+test("platform subscriptions are searchable, paginated, and exclude patient and payment data", async () => {
+  let countWhere: unknown;
+  let findArgs: Record<string, unknown> | undefined;
+  const subscription = {
+    id: "subscription-1", status: "TRIALING", trialEndsAt: new Date("2026-11-01T00:00:00Z"),
+    currentPeriodStart: new Date("2026-10-01T00:00:00Z"), currentPeriodEnd: new Date("2026-11-01T00:00:00Z"), canceledAt: null,
+    plan: { code: "TRIAL", name: "Trial", active: true },
+    hospital: {
+      id: "hospital-1", name: "North Clinic", slug: "north-clinic", organization: { id: "org-1", name: "North Health", status: "ACTIVE" },
+      _count: { branches: 2, memberships: 7 },
+    },
+  };
+  const prisma = {
+    hospitalSubscription: {
+      count: async ({ where }: { where: unknown }) => { countWhere = where; return 1; },
+      findMany: async (args: Record<string, unknown>) => { findArgs = args; return [subscription]; },
+    },
+  };
+  const query = Object.assign(new PlatformSubscriptionQueryDto(), { status: "TRIALING" as const, search: " North ", page: 2, pageSize: 10 });
+  const result = await new PlatformController(prisma as never, {} as never).listSubscriptions(query);
+  assert.equal(findArgs?.skip, 10);
+  assert.equal(findArgs?.take, 10);
+  assert.deepEqual(countWhere, findArgs?.where);
+  assert.deepEqual(countWhere, {
+    status: "TRIALING",
+    hospital: { is: { OR: [
+      { name: { contains: "North", mode: "insensitive" } },
+      { slug: { contains: "North", mode: "insensitive" } },
+      { organization: { is: { name: { contains: "North", mode: "insensitive" } } } },
+    ] } },
+  });
+  assert.equal(result.pagination.total, 1);
+  assert.equal(result.subscriptions[0].hospital.name, "North Clinic");
+  assert.equal(result.subscriptions[0].plan.code, "TRIAL");
+  assert.equal("patients" in result.subscriptions[0].hospital, false);
+  assert.equal("paymentMethod" in result.subscriptions[0], false);
+  assert.deepEqual((findArgs?.select as Record<string, unknown>).hospital, {
+    select: {
+      id: true, name: true, slug: true,
+      organization: { select: { id: true, name: true, status: true } },
+      _count: { select: { branches: true, memberships: true } },
+    },
+  });
 });
 
 test("platform system health reports database and email setup without exposing secrets", async () => {
