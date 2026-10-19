@@ -89,3 +89,54 @@ test("a branch-scoped member cannot broaden access by omitting the branch header
     return true;
   });
 });
+
+test("a selected membership prevents switching tenant by forging hospital headers", async () => {
+  let query: Record<string, any> | undefined;
+  const prisma = {
+    membership: { findMany: async ({ where }: { where: Record<string, any> }) => {
+      query = where;
+      return [{
+        id: "member-hospital-a",
+        organizationId: "org-1",
+        role: "DOCTOR",
+        department: "Medicine",
+        hospitalId: "hospital-a",
+        branchId: null,
+        organization: { id: "org-1", name: "Group", status: "ACTIVE" },
+      }];
+    } },
+    hospital: { findFirst: async () => ({ name: "Hospital B" }) },
+    branch: { findFirst: async () => ({ name: "Main Branch" }) },
+  } as unknown as PrismaService;
+  const guard = new TenantMembershipGuard(prisma);
+  const request: RequestLike = {
+    headers: { "x-organization-id": "org-1", "x-hospital-id": "hospital-b" },
+    authSession: { id: "session-1", activeMembershipId: "member-hospital-a", user: { id: "user-1", email: "doctor@example.test", displayName: "Doctor" } },
+  };
+
+  await assert.rejects(() => guard.canActivate(contextFor(request)), (error: unknown) => error instanceof ForbiddenException);
+  assert.equal(query?.id, "member-hospital-a");
+});
+
+test("tenant guard requires a session selection when multiple hospital scopes are available", async () => {
+  const prisma = {
+    membership: { findMany: async () => [
+      { id: "member-a", organizationId: "org-1", hospitalId: "hospital-a", branchId: null, organization: { id: "org-1", name: "Group", status: "ACTIVE" } },
+      { id: "member-b", organizationId: "org-1", hospitalId: "hospital-b", branchId: null, organization: { id: "org-1", name: "Group", status: "ACTIVE" } },
+    ] },
+  } as unknown as PrismaService;
+  const guard = new TenantMembershipGuard(prisma);
+  const request: RequestLike = {
+    headers: { "x-organization-id": "org-1", "x-hospital-id": "hospital-a" },
+    authSession: { id: "session-1", user: { id: "user-1", email: "doctor@example.test", displayName: "Doctor" } },
+  };
+
+  await assert.rejects(() => guard.canActivate(contextFor(request)), (error: unknown) => {
+    assert.ok(error instanceof ForbiddenException);
+    assert.deepEqual(error.getResponse(), {
+      code: "HOSPITAL_SELECTION_REQUIRED",
+      message: "Select one of your authorized hospital memberships before continuing.",
+    });
+    return true;
+  });
+});

@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
+import { configuredApiBase } from "@/lib/api-base";
 
-const actions = new Set(["login", "logout", "me", "forgot-password", "reset-password"]);
+const actions = new Set(["login", "logout", "me", "forgot-password", "reset-password", "select-membership"]);
 const sessionCookie = process.env.NODE_ENV === "production" ? "__Host-jrxpert_session" : "jrxpert_session";
 export const runtime = "nodejs";
 
@@ -9,24 +10,6 @@ function jsonError(status: number, code: string, message: string) {
     status,
     headers: { "Cache-Control": "no-store", "Pragma": "no-cache" },
   });
-}
-
-function apiBase(): URL | null {
-  const configured = process.env.JR_XPERT_API_URL;
-  if (!configured) return null;
-  try {
-    const url = new URL(configured);
-    const isLocal = url.hostname === "localhost" || url.hostname === "127.0.0.1";
-    if (url.username || url.password || url.search || url.hash) return null;
-    if (process.env.NODE_ENV === "production" && url.protocol !== "https:") return null;
-    const apiPath = url.pathname.replace(/\/$/, "");
-    if (apiPath && apiPath !== "/api/v1") return null;
-    if (url.protocol !== "https:" && !isLocal) return null;
-    url.pathname = "/api/v1";
-    return url;
-  } catch {
-    return null;
-  }
 }
 
 function safeCookie(request: NextRequest): string | null {
@@ -45,7 +28,7 @@ async function proxy(request: NextRequest, action: string, method: "GET" | "POST
       return jsonError(403, "ORIGIN_NOT_ALLOWED", "This request could not be verified.");
     }
   }
-  const base = apiBase();
+  const base = configuredApiBase();
   if (!base) {
     return jsonError(503, "API_NOT_CONFIGURED", "Secure sign-in is not available yet. Contact your hospital administrator.");
   }

@@ -2,6 +2,7 @@ import {
   Body,
   Controller,
   Delete,
+  ForbiddenException,
   Get,
   HttpException,
   HttpStatus,
@@ -32,6 +33,7 @@ import {
 import { LoginDto } from "./login.dto.mjs";
 import { ChangePasswordDto } from "./change-password.dto.mjs";
 import { PasswordResetDto, PasswordResetRequestDto } from "./password-reset.dto.mjs";
+import { SelectMembershipDto } from "./select-membership.dto.mjs";
 import { EmailDeliveryService } from "./email-delivery.service.mjs";
 import { getHeader, type RequestLike, type ResponseLike } from "./auth.types.mjs";
 import { SessionAuthGuard, sessionCookieName } from "./session-auth.guard.mjs";
@@ -91,15 +93,12 @@ export class AuthController {
     const passwordIsValid = user
       ? await verifyPassword(body.password, user.passwordHash)
       : false;
-    const accountIsValid = Boolean(
-      user && user.status === "ACTIVE" && user.emailVerifiedAt && user.memberships.some(({ role }) =>
-        mode === "PATIENT"
-          ? role === "PATIENT"
-          : mode === "SUPER_ADMIN"
-            ? role === "SUPER_ADMIN" || role === "PLATFORM_ADMIN"
-            : role !== "PATIENT",
-      ),
-    );
+    const allowedMemberships = user?.memberships.filter(({ role }) => mode === "PATIENT"
+      ? role === "PATIENT"
+      : mode === "SUPER_ADMIN"
+        ? role === "SUPER_ADMIN" || role === "PLATFORM_ADMIN"
+        : role !== "PATIENT") ?? [];
+    const accountIsValid = Boolean(user && user.status === "ACTIVE" && user.emailVerifiedAt && allowedMemberships.length > 0);
     if (!passwordIsValid || !accountIsValid || !user) {
       await this.recordAuthenticationFailure(keys, user?.id);
       throw authenticationFailure();
@@ -169,6 +168,16 @@ export class AuthController {
     const expiresAt = new Date(Date.now() + SESSION_DURATION_MS);
     const userAgent = getHeader(request, "user-agent")?.slice(0, 512) ?? null;
     const session = await this.prisma.$transaction(async (transaction) => {
+      // Serialize session creation with platform account suspension. If login
+      // owns this row lock first, suspension waits and then revokes the new
+      // session; if suspension commits first, this query returns no row.
+      const activeAccount = await transaction.$queryRaw<Array<{ id: string }>>`
+        SELECT "id" FROM "User"
+        WHERE "id" = ${user.id} AND "status" = 'ACTIVE'::"AccountStatus"
+        FOR UPDATE
+      `;
+      if (activeAccount.length !== 1) return null;
+
       const consumed = await transaction.loginVerificationCode.updateMany({
         where: { id: challenge.id, userId: user.id, mode, codeHash: challenge.codeHash, usedAt: null, expiresAt: { gt: now }, failedAttempts: { lt: MAX_LOGIN_CODE_ATTEMPTS } },
         data: { usedAt: now },
@@ -182,6 +191,7 @@ export class AuthController {
           userAgent,
           expiresAt,
           lastUsedAt: now,
+          activeMembershipId: mode !== "SUPER_ADMIN" && allowedMemberships.length === 1 ? allowedMemberships[0].id : null,
         },
       });
       await transaction.auditEvent.create({
@@ -204,12 +214,7 @@ export class AuthController {
     response.setHeader("Set-Cookie", this.createSessionCookie(rawToken, expiresAt));
     return {
       user: { id: user.id, email: user.email, displayName: user.displayName },
-      memberships: user.memberships.filter(({ role }) => mode === "PATIENT"
-        ? role === "PATIENT"
-        : mode === "SUPER_ADMIN"
-          ? role === "SUPER_ADMIN" || role === "PLATFORM_ADMIN"
-          : role !== "PATIENT",
-      ).map((membership) => ({
+      memberships: allowedMemberships.map((membership) => ({
         id: membership.id,
         role: membership.role,
         department: membership.department,
@@ -357,7 +362,55 @@ export class AuthController {
       },
       orderBy: [{ organizationId: "asc" }, { hospitalId: "asc" }, { branchId: "asc" }],
     });
-    return { user, memberships };
+    const selectedMembershipId = memberships.some(({ id }) => id === request.authSession!.activeMembershipId)
+      ? request.authSession!.activeMembershipId
+      : null;
+    return { user, memberships, selectedMembershipId };
+  }
+
+  @Post("select-membership")
+  @UseGuards(SessionAuthGuard)
+  @ApiCookieAuth("jr-xpert-session")
+  @ApiOperation({ summary: "Select an active hospital membership for the current session" })
+  async selectMembership(@Body() body: SelectMembershipDto, @Req() request: RequestLike) {
+    const userId = request.authSession!.user.id;
+    const now = new Date();
+    await this.prisma.$transaction(async (transaction) => {
+      const membership = await transaction.membership.findFirst({
+        where: {
+          id: body.membershipId,
+          userId,
+          status: "ACTIVE",
+          OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
+          organization: { status: "ACTIVE" },
+          AND: [
+            { OR: [{ hospitalId: null }, { hospital: { is: { status: "ACTIVE" } } }] },
+            { OR: [{ branchId: null }, { branch: { is: { status: "ACTIVE" } } }] },
+          ],
+        },
+        select: { id: true, organizationId: true },
+      });
+      if (!membership) {
+        throw new ForbiddenException({ code: "MEMBERSHIP_NOT_AVAILABLE", message: "This workspace is not available to this account." });
+      }
+
+      const updated = await transaction.session.updateMany({
+        where: { id: request.authSession!.id, userId, revokedAt: null, expiresAt: { gt: now } },
+        data: { activeMembershipId: membership.id },
+      });
+      if (updated.count !== 1) throw new UnauthorizedException("Authentication required.");
+
+      await transaction.auditEvent.create({
+        data: {
+          organizationId: membership.organizationId,
+          actorUserId: userId,
+          action: "auth.membership_selected",
+          resourceType: "membership",
+          resourceId: membership.id,
+        },
+      });
+    });
+    return { selectedMembershipId: body.membershipId };
   }
 
   @Post("password")
@@ -452,15 +505,17 @@ export class AuthController {
   @ApiCookieAuth("jr-xpert-session")
   async revokeSession(@Param("sessionId") sessionId: string, @Req() request: RequestLike) {
     const userId = request.authSession!.user.id;
-    const result = await this.prisma.session.updateMany({
-      where: { id: sessionId, userId, revokedAt: null },
-      data: { revokedAt: new Date() },
-    });
-    if (result.count) {
-      await this.prisma.auditEvent.create({
-        data: { actorUserId: userId, action: "auth.session_revoked", resourceType: "session", resourceId: sessionId },
+    await this.prisma.$transaction(async (transaction) => {
+      const result = await transaction.session.updateMany({
+        where: { id: sessionId, userId, revokedAt: null },
+        data: { revokedAt: new Date() },
       });
-    }
+      if (result.count) {
+        await transaction.auditEvent.create({
+          data: { actorUserId: userId, action: "auth.session_revoked", resourceType: "session", resourceId: sessionId },
+        });
+      }
+    });
     return undefined;
   }
 
@@ -470,19 +525,21 @@ export class AuthController {
   @ApiCookieAuth("jr-xpert-session")
   async revokeOtherSessions(@Req() request: RequestLike) {
     const userId = request.authSession!.user.id;
-    const result = await this.prisma.session.updateMany({
-      where: { userId, id: { not: request.authSession!.id }, revokedAt: null },
-      data: { revokedAt: new Date() },
+    return this.prisma.$transaction(async (transaction) => {
+      const result = await transaction.session.updateMany({
+        where: { userId, id: { not: request.authSession!.id }, revokedAt: null },
+        data: { revokedAt: new Date() },
+      });
+      await transaction.auditEvent.create({
+        data: {
+          actorUserId: userId,
+          action: "auth.other_sessions_revoked",
+          resourceType: "session",
+          metadata: { revokedCount: result.count } as Prisma.InputJsonObject,
+        },
+      });
+      return { revokedCount: result.count };
     });
-    await this.prisma.auditEvent.create({
-      data: {
-        actorUserId: userId,
-        action: "auth.other_sessions_revoked",
-        resourceType: "session",
-        metadata: { revokedCount: result.count } as Prisma.InputJsonObject,
-      },
-    });
-    return { revokedCount: result.count };
   }
 
   private getRateKeys(email: string, ip: string): string[] {

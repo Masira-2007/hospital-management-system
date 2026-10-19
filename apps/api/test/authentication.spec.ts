@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { ServiceUnavailableException, UnauthorizedException } from "@nestjs/common";
+import { ForbiddenException, ServiceUnavailableException, UnauthorizedException } from "@nestjs/common";
 import { test } from "node:test";
 import { AuthController } from "../src/auth/auth.controller.mjs";
 import { hashEmailVerificationCode, hashPassword } from "../src/security/security.crypto.mjs";
@@ -43,6 +43,11 @@ test("patient login sends a one-time email code and creates a 12-hour session on
     },
     auditEvent: { create: async () => ({}) },
     $transaction: async (callback: (transaction: Record<string, unknown>) => Promise<unknown>) => callback({
+      $queryRaw: async (query: TemplateStringsArray, ...values: unknown[]) => {
+        assert.match(query.join(""), /FOR UPDATE/);
+        assert.deepEqual(values, ["user-1"]);
+        return [{ id: "user-1" }];
+      },
       loginVerificationCode: { updateMany: async () => {
         storedChallenge = { ...storedChallenge, usedAt: new Date() };
         return { count: 1 };
@@ -79,11 +84,41 @@ test("patient login sends a one-time email code and creates a 12-hour session on
   assert.deepEqual(response.memberships.map(({ role }) => role), ["PATIENT"]);
   assert.equal(storedChallenge?.codeHash, hashEmailVerificationCode(sentCode));
   assert.ok(storedChallenge?.usedAt);
+  assert.equal(createdSession?.activeMembershipId, "member-patient");
   assert.equal(typeof createdSession?.tokenHash, "string");
   assert.notEqual(createdSession?.tokenHash, cookie.match(/=([a-f0-9]{64})/)?.[1]);
   const remainingSessionMs = (createdSession?.expiresAt as Date).getTime() - Date.now();
   assert.ok(remainingSessionMs > 11 * 60 * 60 * 1000 && remainingSessionMs <= 12 * 60 * 60 * 1000);
   assert.match(cookie, /^jrxpert_session=[a-f0-9]{64}; HttpOnly; Path=\/; SameSite=Strict; Max-Age=/);
+});
+
+test("account suspension between email code delivery and login blocks session creation", async () => {
+  const passwordHash = await hashPassword("correct horse battery 927!");
+  let sentCode = "";
+  let challenge: Record<string, unknown> | undefined;
+  let sessionCreated = false;
+  let failureAudited = false;
+  const prisma = {
+    authRateLimit: { findUnique: async () => null, upsert: async () => ({ failedAttempts: 1 }) },
+    user: { findUnique: async () => ({ id: "staff-1", email: "staff@example.test", displayName: "Staff", status: "ACTIVE", emailVerifiedAt: new Date(), passwordHash, memberships: [{ id: "member-1", role: "HOSPITAL_ADMIN" }] }) },
+    loginVerificationCode: {
+      create: async ({ data }: { data: Record<string, unknown> }) => { challenge = { ...data, id: "challenge-1", failedAttempts: 0, usedAt: null }; return { id: "challenge-1" }; },
+      findUnique: async () => challenge,
+      updateMany: async () => { throw new Error("suspended account must not consume or create a session from this code"); },
+    },
+    auditEvent: { create: async ({ data }: { data: { action: string } }) => { if (data.action === "auth.login_failed") failureAudited = true; return {}; } },
+    $transaction: async (callback: (transaction: Record<string, unknown>) => Promise<unknown>) => callback({
+      $queryRaw: async (query: TemplateStringsArray) => { assert.match(query.join(""), /FOR UPDATE/); return []; },
+      loginVerificationCode: { updateMany: async () => { throw new Error("a consumed code must not reach this step"); } },
+      session: { create: async () => { sessionCreated = true; throw new Error("session must not be created"); } },
+      auditEvent: { create: async () => ({}) }, authRateLimit: { deleteMany: async () => ({ count: 0 }) },
+    }),
+  };
+  const controller = new AuthController(prisma as never, { isEmailDeliveryConfigured: () => true, sendLoginVerificationCode: async (_email: string, code: string) => { sentCode = code; } } as never);
+  const firstStep = await controller.login({ email: "staff@example.test", password: "correct horse battery 927!", mode: "HOSPITAL" }, request, { setHeader: () => undefined });
+  await assert.rejects(() => controller.login({ email: "staff@example.test", password: "correct horse battery 927!", mode: "HOSPITAL", challengeToken: firstStep.challengeToken, emailCode: sentCode }, request, { setHeader: () => undefined }), (error: unknown) => error instanceof UnauthorizedException);
+  assert.equal(sessionCreated, false);
+  assert.equal(failureAudited, true);
 });
 
 test("super-admin login uses email verification rather than requiring an authenticator code", async () => {
@@ -100,6 +135,11 @@ test("super-admin login uses email verification rather than requiring an authent
     },
     auditEvent: { create: async () => ({}) },
     $transaction: async (callback: (transaction: Record<string, any>) => Promise<unknown>) => callback({
+      $queryRaw: async (query: TemplateStringsArray, ...values: unknown[]) => {
+        assert.match(query.join(""), /FOR UPDATE/);
+        assert.deepEqual(values, ["admin-1"]);
+        return [{ id: "admin-1" }];
+      },
       loginVerificationCode: { updateMany: async () => { storedChallenge = { ...storedChallenge, usedAt: new Date() }; return { count: 1 }; } },
       session: { create: async ({ data }: { data: Record<string, unknown> }) => ({ id: "session-admin", expiresAt: data.expiresAt }) },
       auditEvent: { create: async () => ({}) }, authRateLimit: { deleteMany: async () => ({ count: 1 }) },
@@ -245,4 +285,154 @@ test("password reset rejects an expired token", async () => {
     assert.equal(error.getStatus(), 401);
     return true;
   });
+});
+
+test("session management lists only the authenticated account's active sessions without token hashes", async () => {
+  let query: Record<string, any> | undefined;
+  const sessions = [
+    { id: "session-current", userAgent: "test device", createdAt: new Date(), lastUsedAt: new Date(), expiresAt: new Date(Date.now() + 60_000) },
+    { id: "session-other", userAgent: null, createdAt: new Date(), lastUsedAt: null, expiresAt: new Date(Date.now() + 60_000) },
+  ];
+  const controller = new AuthController({
+    session: { findMany: async (args: Record<string, any>) => { query = args; return sessions; } },
+  } as never, {} as never);
+  const result = await controller.listSessions({
+    ...request,
+    authSession: { id: "session-current", user: { id: "user-1", email: "admin@example.test", displayName: "Admin" } },
+  });
+
+  assert.equal(query?.where.userId, "user-1");
+  assert.equal(query?.where.revokedAt, null);
+  assert.ok(query?.where.expiresAt.gt instanceof Date);
+  assert.equal(query?.take, 50);
+  assert.deepEqual(query?.select, { id: true, userAgent: true, createdAt: true, lastUsedAt: true, expiresAt: true });
+  assert.deepEqual(result.sessions.map(({ id, current }) => ({ id, current })), [
+    { id: "session-current", current: true },
+    { id: "session-other", current: false },
+  ]);
+  assert.equal(Object.hasOwn(result.sessions[0], "tokenHash"), false);
+});
+
+test("membership selection is verified for the signed-in user, persisted per session, and audited", async () => {
+  let membershipQuery: Record<string, any> | undefined;
+  let sessionUpdate: Record<string, any> | undefined;
+  let audit: Record<string, any> | undefined;
+  const controller = new AuthController({
+    $transaction: async (callback: (transaction: Record<string, any>) => Promise<unknown>) => callback({
+      membership: { findFirst: async ({ where }: { where: Record<string, any> }) => { membershipQuery = where; return { id: "member-1", organizationId: "org-1" }; } },
+      session: { updateMany: async (args: Record<string, any>) => { sessionUpdate = args; return { count: 1 }; } },
+      auditEvent: { create: async ({ data }: { data: Record<string, any> }) => { audit = data; return {}; } },
+    }),
+  } as never, {} as never);
+  const result = await controller.selectMembership({ membershipId: "member-1" }, {
+    ...request,
+    authSession: { id: "session-1", user: { id: "user-1", email: "staff@example.test", displayName: "Staff" } },
+  });
+
+  assert.deepEqual(membershipQuery, {
+    id: "member-1",
+    userId: "user-1",
+    status: "ACTIVE",
+    OR: [{ expiresAt: null }, { expiresAt: { gt: membershipQuery?.OR?.[1]?.expiresAt?.gt } }],
+    organization: { status: "ACTIVE" },
+    AND: [
+      { OR: [{ hospitalId: null }, { hospital: { is: { status: "ACTIVE" } } }] },
+      { OR: [{ branchId: null }, { branch: { is: { status: "ACTIVE" } } }] },
+    ],
+  });
+  assert.ok(membershipQuery?.OR?.[1]?.expiresAt?.gt instanceof Date);
+  assert.deepEqual(sessionUpdate?.where, { id: "session-1", userId: "user-1", revokedAt: null, expiresAt: { gt: sessionUpdate?.where.expiresAt.gt } });
+  assert.ok(sessionUpdate?.where.expiresAt.gt instanceof Date);
+  assert.deepEqual(sessionUpdate?.data, { activeMembershipId: "member-1" });
+  assert.deepEqual(audit, { organizationId: "org-1", actorUserId: "user-1", action: "auth.membership_selected", resourceType: "membership", resourceId: "member-1" });
+  assert.deepEqual(result, { selectedMembershipId: "member-1" });
+});
+
+test("membership selection rejects a membership owned by a different account", async () => {
+  let updated = false;
+  const controller = new AuthController({
+    $transaction: async (callback: (transaction: Record<string, any>) => Promise<unknown>) => callback({
+      membership: { findFirst: async () => null },
+      session: { updateMany: async () => { updated = true; return { count: 1 }; } },
+      auditEvent: { create: async () => ({}) },
+    }),
+  } as never, {} as never);
+  await assert.rejects(() => controller.selectMembership({ membershipId: "foreign-member" }, {
+    ...request,
+    authSession: { id: "session-1", user: { id: "user-1", email: "staff@example.test", displayName: "Staff" } },
+  }), (error: unknown) => error instanceof ForbiddenException && error.getStatus() === 403);
+  assert.equal(updated, false);
+});
+
+test("session revocation is constrained to the authenticated account and audited", async () => {
+  let update: Record<string, any> | undefined;
+  let transactions = 0;
+  const auditEvents: Array<Record<string, any>> = [];
+  const controller = new AuthController({
+    $transaction: async (callback: (transaction: Record<string, any>) => Promise<unknown>) => {
+      transactions += 1;
+      return callback({
+        session: { updateMany: async (args: Record<string, any>) => { update = args; return { count: 1 }; } },
+        auditEvent: { create: async ({ data }: { data: Record<string, any> }) => { auditEvents.push(data); return {}; } },
+      });
+    },
+  } as never, {} as never);
+  await controller.revokeSession("session-foreign", {
+    ...request,
+    authSession: { id: "session-current", user: { id: "user-1", email: "admin@example.test", displayName: "Admin" } },
+  });
+
+  assert.deepEqual(update?.where, { id: "session-foreign", userId: "user-1", revokedAt: null });
+  assert.ok(update?.data.revokedAt instanceof Date);
+  assert.equal(transactions, 1);
+  assert.equal(auditEvents.length, 1);
+  assert.equal(auditEvents[0].actorUserId, "user-1");
+  assert.equal(auditEvents[0].resourceId, "session-foreign");
+});
+
+test("session revocation aborts when its audit event cannot be persisted", async () => {
+  let persistedRevocation: Date | null = null;
+  const controller = new AuthController({
+    $transaction: async (callback: (transaction: Record<string, any>) => Promise<unknown>) => {
+      let pendingRevocation: Date | null = null;
+      const result = await callback({
+        session: { updateMany: async ({ data }: { data: { revokedAt: Date } }) => { pendingRevocation = data.revokedAt; return { count: 1 }; } },
+        auditEvent: { create: async () => { throw new Error("audit storage unavailable"); } },
+      });
+      persistedRevocation = pendingRevocation;
+      return result;
+    },
+  } as never, {} as never);
+
+  await assert.rejects(() => controller.revokeSession("session-1", {
+    ...request,
+    authSession: { id: "session-current", user: { id: "user-1", email: "admin@example.test", displayName: "Admin" } },
+  }), /audit storage unavailable/);
+  assert.equal(persistedRevocation, null);
+});
+
+test("revoke-other-sessions preserves the current session", async () => {
+  let update: Record<string, any> | undefined;
+  let transactions = 0;
+  const auditEvents: Array<Record<string, any>> = [];
+  const controller = new AuthController({
+    $transaction: async (callback: (transaction: Record<string, any>) => Promise<unknown>) => {
+      transactions += 1;
+      return callback({
+        session: { updateMany: async (args: Record<string, any>) => { update = args; return { count: 2 }; } },
+        auditEvent: { create: async ({ data }: { data: Record<string, any> }) => { auditEvents.push(data); return {}; } },
+      });
+    },
+  } as never, {} as never);
+  const result = await controller.revokeOtherSessions({
+    ...request,
+    authSession: { id: "session-current", user: { id: "user-1", email: "admin@example.test", displayName: "Admin" } },
+  });
+
+  assert.deepEqual(update?.where, { userId: "user-1", id: { not: "session-current" }, revokedAt: null });
+  assert.ok(update?.data.revokedAt instanceof Date);
+  assert.equal(transactions, 1);
+  assert.equal(auditEvents.length, 1);
+  assert.equal(auditEvents[0].metadata.revokedCount, 2);
+  assert.equal(result.revokedCount, 2);
 });

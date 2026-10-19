@@ -41,7 +41,7 @@ export class SessionAuthGuard implements CanActivate {
       data: { lastUsedAt: now },
     });
     if (refreshed.count !== 1) throw new UnauthorizedException("Authentication required.");
-    request.authSession = { id: session.id, user: session.user };
+    request.authSession = { id: session.id, activeMembershipId: session.activeMembershipId, user: session.user };
     return true;
   }
 }

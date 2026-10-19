@@ -58,3 +58,26 @@ export class PlatformSubscriptionQueryDto {
   @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(100)
   pageSize = 25;
 }
+
+export class PlatformAccountQueryDto {
+  @IsOptional()
+  @IsIn(["ACTIVE", "INVITED", "SUSPENDED", "DISABLED"])
+  status?: "ACTIVE" | "INVITED" | "SUSPENDED" | "DISABLED";
+
+  @IsOptional() @IsString() @MaxLength(100)
+  search?: string;
+
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(10_000)
+  page = 1;
+
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(100)
+  pageSize = 25;
+}
+
+export class PlatformAccountStatusChangeDto {
+  @IsIn(["SUSPEND", "REACTIVATE"])
+  action!: "SUSPEND" | "REACTIVATE";
+
+  @IsString() @MinLength(10) @MaxLength(1000)
+  reason!: string;
+}

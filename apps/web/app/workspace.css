@@ -1,0 +1,7 @@
+.workspace-affiliations article.selected{border-color:#79cbd0;background:#f8fdfd}
+.workspace-selection-help{margin:0 0 12px;color:#71889a;font-size:10px;line-height:1.6}
+.workspace-select-button{min-height:34px;padding:0 10px;border:1px solid #dce9ef;border-radius:7px;background:#fff;color:#087f8b;font-size:9px;font-weight:680;white-space:nowrap;cursor:pointer}
+.workspace-select-button:hover:not(:disabled){background:#f0f9fa}
+.workspace-select-button:disabled{border-color:#cdece2;background:#eff9f5;color:#178168;cursor:default}
+.workspace-selection-error{padding:9px 11px;border:1px solid #f2cfd4;border-radius:7px;background:#fff5f6;color:#ac394d}
+@media(max-width:720px){.workspace-affiliations article{flex-wrap:wrap}.workspace-select-button{margin-left:47px}}

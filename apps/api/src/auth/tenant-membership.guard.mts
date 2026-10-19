@@ -24,6 +24,7 @@ export class TenantMembershipGuard implements CanActivate {
       where: {
         userId: user.id,
         organizationId,
+        ...(request.authSession!.activeMembershipId ? { id: request.authSession!.activeMembershipId } : {}),
         status: "ACTIVE",
         OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
       },
@@ -33,6 +34,16 @@ export class TenantMembershipGuard implements CanActivate {
         branch: { select: { id: true, name: true, hospitalId: true } },
       },
     });
+
+    const availableContexts = new Set(memberships
+      .filter((membership) => membership.organization.status === "ACTIVE")
+      .map((membership) => `${membership.organizationId}:${membership.hospitalId ?? "*"}:${membership.branchId ?? "*"}`));
+    if (!request.authSession!.activeMembershipId && availableContexts.size > 1) {
+      throw new ForbiddenException({
+        code: "HOSPITAL_SELECTION_REQUIRED",
+        message: "Select one of your authorized hospital memberships before continuing.",
+      });
+    }
 
     const eligible = memberships.filter((membership) => {
       if (membership.organization.status !== "ACTIVE") return false;

@@ -5,6 +5,7 @@ export interface RequestLike {
   ip?: string;
   authSession?: {
     id: string;
+    activeMembershipId?: string | null;
     user: { id: string; email: string; displayName: string };
   };
   tenant?: {

@@ -5,7 +5,7 @@ import { HospitalApplicationsController } from "../src/applications/hospital-app
 import { HospitalInvitationsController } from "../src/applications/hospital-invitations.controller.mjs";
 import { PlatformBootstrapController } from "../src/applications/platform-bootstrap.controller.mjs";
 import { PlatformController } from "../src/applications/platform.controller.mjs";
-import { PlatformAuditQueryDto, PlatformHospitalQueryDto, PlatformSubscriptionQueryDto } from "../src/applications/platform-hospital.dto.mjs";
+import { PlatformAccountQueryDto, PlatformAuditQueryDto, PlatformHospitalQueryDto, PlatformSubscriptionQueryDto } from "../src/applications/platform-hospital.dto.mjs";
 import { SuperAdminGuard } from "../src/auth/super-admin.guard.mjs";
 import { hashEmailVerificationCode, hashSessionToken } from "../src/security/security.crypto.mjs";
 
@@ -395,6 +395,116 @@ test("platform subscriptions are searchable, paginated, and exclude patient and 
       _count: { select: { branches: true, memberships: true } },
     },
   });
+});
+
+test("platform account directory is paginated and excludes patient-only and platform-admin accounts", async () => {
+  let findArgs: Record<string, unknown> | undefined;
+  let countWhere: unknown;
+  let auditData: unknown;
+  const account = {
+    id: "staff-1", email: "doctor@example.test", displayName: "Dr Example", status: "ACTIVE", createdAt: new Date(0),
+    memberships: [{ id: "membership-1", role: "DOCTOR", status: "ACTIVE", organization: { id: "org-1", name: "North Health", status: "ACTIVE" }, hospital: { id: "hospital-1", name: "North Clinic", status: "ACTIVE" }, branch: null }],
+  };
+  const prisma = {
+    $transaction: async (callback: (transaction: Record<string, unknown>) => Promise<unknown>) => callback({
+      user: {
+        count: async ({ where }: { where: unknown }) => { countWhere = where; return 1; },
+        findMany: async (args: Record<string, unknown>) => { findArgs = args; return [account]; },
+      },
+      auditEvent: { create: async ({ data }: { data: unknown }) => { auditData = data; } },
+    }),
+  };
+  const query = Object.assign(new PlatformAccountQueryDto(), { search: " doctor ", status: "ACTIVE" as const, page: 2, pageSize: 10 });
+  const result = await new PlatformController(prisma as never, {} as never).listAccounts(query, { authSession: { user: { id: "admin-1" } } } as never);
+  assert.equal(findArgs?.skip, 10);
+  assert.equal(findArgs?.take, 10);
+  assert.deepEqual(countWhere, findArgs?.where);
+  assert.deepEqual(countWhere, {
+    status: "ACTIVE",
+    memberships: { some: { role: { not: "PATIENT" } }, none: { role: { in: ["PATIENT", "SUPER_ADMIN", "PLATFORM_ADMIN"] } } },
+    OR: [{ displayName: { contains: "doctor", mode: "insensitive" } }, { email: { contains: "doctor", mode: "insensitive" } }],
+  });
+  const select = findArgs?.select as Record<string, unknown>;
+  assert.equal("passwordHash" in select, false);
+  assert.deepEqual(select.memberships, {
+    where: { role: { not: "PATIENT" } }, orderBy: [{ createdAt: "asc" }, { id: "asc" }], take: 10,
+    select: { id: true, role: true, status: true, organization: { select: { id: true, name: true, status: true } }, hospital: { select: { id: true, name: true, status: true } }, branch: { select: { id: true, name: true, status: true } } },
+  });
+  assert.equal(result.accounts[0].memberships[0].role, "DOCTOR");
+  assert.equal("passwordHash" in result.accounts[0], false);
+  assert.equal((auditData as { action: string }).action, "platform.staff_accounts_listed");
+  assert.equal(result.pagination.total, 1);
+});
+
+test("staff suspension revokes active sessions and audits the change transactionally", async () => {
+  let updateData: unknown;
+  let revokeWhere: unknown;
+  let revokeData: unknown;
+  let loginCodeWhere: unknown;
+  let auditData: unknown;
+  const prisma = {
+    $transaction: async (callback: (transaction: Record<string, unknown>) => Promise<unknown>) => callback({
+      user: {
+        findUnique: async () => ({ id: "staff-1", displayName: "Dr Example", status: "ACTIVE" }),
+        updateMany: async ({ data }: { data: unknown }) => { updateData = data; return { count: 1 }; },
+      },
+      membership: { findFirst: async () => null },
+      session: { updateMany: async (args: { where: unknown; data: unknown }) => { revokeWhere = args.where; revokeData = args.data; return { count: 3 }; } },
+      loginVerificationCode: { updateMany: async (args: { where: unknown }) => { loginCodeWhere = args.where; return { count: 2 }; } },
+      auditEvent: { create: async ({ data }: { data: unknown }) => { auditData = data; } },
+    }),
+  };
+  const result = await new PlatformController(prisma as never, {} as never).changeAccountStatus("staff-1", { action: "SUSPEND", reason: "Confirmed security review requires account suspension." }, { authSession: { user: { id: "admin-1" } } } as never);
+  assert.deepEqual(updateData, { status: "SUSPENDED" });
+  assert.deepEqual(revokeWhere, { userId: "staff-1", revokedAt: null, expiresAt: { gt: (revokeData as { revokedAt: Date }).revokedAt } });
+  assert.ok((revokeData as { revokedAt: Date }).revokedAt instanceof Date);
+  assert.deepEqual(loginCodeWhere, { userId: "staff-1", usedAt: null });
+  assert.equal(result.changed, true);
+  assert.equal(result.revokedSessions, 3);
+  assert.deepEqual(result.account, { id: "staff-1", displayName: "Dr Example", status: "SUSPENDED" });
+  assert.equal((auditData as { action: string }).action, "platform.staff_account_suspended");
+  assert.equal((auditData as { reason: string }).reason, "Confirmed security review requires account suspension.");
+});
+
+test("platform account controls reject self suspension and protect platform-admin accounts", async () => {
+  let transactionCount = 0;
+  const controller = new PlatformController({
+    $transaction: async (callback: (transaction: Record<string, unknown>) => Promise<unknown>) => {
+      transactionCount += 1;
+      return callback({ user: { findUnique: async () => ({ id: "staff-1", displayName: "Another Admin", status: "ACTIVE" }) }, membership: { findFirst: async ({ where }: { where: { role: unknown } }) => where.role === "PATIENT" ? null : ({ id: "platform-membership" }) } });
+    },
+  } as never, {} as never);
+  const actorRequest = { authSession: { user: { id: "admin-1" } } } as never;
+  await assert.rejects(() => controller.changeAccountStatus("admin-1", { action: "SUSPEND", reason: "Disable my account for this test." }, actorRequest), (error: unknown) => error instanceof ForbiddenException);
+  assert.equal(transactionCount, 0, "self-suspension is blocked before any database query");
+  await assert.rejects(() => controller.changeAccountStatus("staff-1", { action: "SUSPEND", reason: "Confirmed request to suspend this account." }, actorRequest), (error: unknown) => error instanceof ForbiddenException);
+  assert.equal(transactionCount, 1);
+  const patientController = new PlatformController({
+    $transaction: async (callback: (transaction: Record<string, unknown>) => Promise<unknown>) => callback({
+      user: { findUnique: async () => ({ id: "mixed-1", displayName: "Staff and Patient", status: "ACTIVE" }) },
+      membership: { findFirst: async ({ where }: { where: { role: unknown } }) => where.role === "PATIENT" ? ({ id: "patient-membership" }) : null },
+    }),
+  } as never, {} as never);
+  await assert.rejects(() => patientController.changeAccountStatus("mixed-1", { action: "SUSPEND", reason: "Confirmed request to suspend this account." }, actorRequest), (error: unknown) => error instanceof ForbiddenException);
+});
+
+test("platform account controls are idempotent and only change active or suspended accounts", async () => {
+  let auditCount = 0;
+  const makeController = (status: string) => new PlatformController({
+    $transaction: async (callback: (transaction: Record<string, unknown>) => Promise<unknown>) => callback({
+      user: { findUnique: async () => ({ id: "staff-1", displayName: "Dr Example", status }), updateMany: async () => ({ count: 1 }) },
+      membership: { findFirst: async () => null },
+      session: { updateMany: async () => ({ count: 0 }) },
+      loginVerificationCode: { updateMany: async () => ({ count: 0 }) },
+      auditEvent: { create: async () => { auditCount += 1; } },
+    }),
+  } as never, {} as never);
+  const request = { authSession: { user: { id: "admin-1" } } } as never;
+  const unchanged = await makeController("SUSPENDED").changeAccountStatus("staff-1", { action: "SUSPEND", reason: "Confirmed reason for account status change." }, request);
+  assert.equal(unchanged.changed, false);
+  await assert.rejects(() => makeController("INVITED").changeAccountStatus("staff-1", { action: "SUSPEND", reason: "Confirmed reason for account status change." }, request), (error: unknown) => error instanceof ConflictException);
+  await assert.rejects(() => makeController("DISABLED").changeAccountStatus("staff-1", { action: "REACTIVATE", reason: "Confirmed reason for account status change." }, request), (error: unknown) => error instanceof ConflictException);
+  assert.equal(auditCount, 0);
 });
 
 test("platform system health reports database and email setup without exposing secrets", async () => {

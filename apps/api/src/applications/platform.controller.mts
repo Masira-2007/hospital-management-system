@@ -1,4 +1,4 @@
-import { BadRequestException, Body, ConflictException, Controller, Get, NotFoundException, Param, Post, Query, Req, UseGuards } from "@nestjs/common";
+import { BadRequestException, Body, ConflictException, Controller, ForbiddenException, Get, NotFoundException, Param, Post, Query, Req, UseGuards } from "@nestjs/common";
 import { ApiCookieAuth, ApiOperation, ApiTags } from "@nestjs/swagger";
 import type { Prisma } from "@prisma/client";
 import { PrismaService } from "../database/prisma.service.mjs";
@@ -8,7 +8,7 @@ import { EmailDeliveryService } from "../auth/email-delivery.service.mjs";
 import type { RequestLike } from "../auth/auth.types.mjs";
 import { createSessionToken, hashSessionToken } from "../security/security.crypto.mjs";
 import { ApplicationDecisionDto, HospitalApplicationQueryDto } from "./hospital-application.dto.mjs";
-import { HospitalStatusChangeDto, PlatformAuditQueryDto, PlatformHospitalQueryDto, PlatformSubscriptionQueryDto } from "./platform-hospital.dto.mjs";
+import { HospitalStatusChangeDto, PlatformAccountQueryDto, PlatformAccountStatusChangeDto, PlatformAuditQueryDto, PlatformHospitalQueryDto, PlatformSubscriptionQueryDto } from "./platform-hospital.dto.mjs";
 
 const INVITATION_LIFETIME_MS = 72 * 60 * 60 * 1000;
 
@@ -89,6 +89,113 @@ export class PlatformController {
       }),
     ]);
     return { hospitals, pagination: { page: query.page, pageSize: query.pageSize, total, pages: Math.ceil(total / query.pageSize) } };
+  }
+
+  @Get("accounts")
+  @ApiOperation({ summary: "List non-patient staff accounts and authorized workspace memberships" })
+  async listAccounts(@Query() query: PlatformAccountQueryDto, @Req() request: RequestLike) {
+    const search = query.search?.trim();
+    const where: Prisma.UserWhereInput = {
+      ...(query.status ? { status: query.status } : {}),
+      // Patient-only accounts are intentionally excluded from the platform directory.
+      memberships: {
+        some: { role: { not: "PATIENT" } },
+        none: { role: { in: ["PATIENT", "SUPER_ADMIN", "PLATFORM_ADMIN"] } },
+      },
+      ...(search ? { OR: [
+        { displayName: { contains: search, mode: "insensitive" } },
+        { email: { contains: search, mode: "insensitive" } },
+      ] } : {}),
+    };
+    const skip = (query.page - 1) * query.pageSize;
+    const result = await this.prisma.$transaction(async (transaction) => {
+      const [total, accounts] = await Promise.all([
+        transaction.user.count({ where }),
+        transaction.user.findMany({
+          where,
+          orderBy: [{ createdAt: "desc" }, { id: "asc" }],
+          skip,
+          take: query.pageSize,
+          select: {
+            id: true, email: true, displayName: true, status: true, createdAt: true,
+            memberships: {
+              where: { role: { not: "PATIENT" } },
+              orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+              take: 10,
+              select: {
+                id: true, role: true, status: true,
+                organization: { select: { id: true, name: true, status: true } },
+                hospital: { select: { id: true, name: true, status: true } },
+                branch: { select: { id: true, name: true, status: true } },
+              },
+            },
+          },
+        }),
+      ]);
+      await transaction.auditEvent.create({
+        data: {
+          actorUserId: request.authSession!.user.id,
+          action: "platform.staff_accounts_listed",
+          resourceType: "platform_staff_account_collection",
+          metadata: { page: query.page, pageSize: query.pageSize, statusFilter: query.status ?? null, searchApplied: Boolean(search), resultCount: accounts.length } as Prisma.InputJsonObject,
+        },
+      });
+      return { total, accounts };
+    });
+    return { accounts: result.accounts, pagination: { page: query.page, pageSize: query.pageSize, total: result.total, pages: Math.ceil(result.total / query.pageSize) } };
+  }
+
+  @Post("accounts/:userId/status")
+  @ApiOperation({ summary: "Suspend or reactivate a staff account, revoke sessions on suspension, and audit the change" })
+  async changeAccountStatus(@Param("userId") userId: string, @Body() body: PlatformAccountStatusChangeDto, @Req() request: RequestLike) {
+    const reason = body.reason.trim();
+    if (reason.length < 10) throw new BadRequestException("Provide a clear reason of at least 10 characters.");
+    const actorUserId = request.authSession!.user.id;
+    if (body.action === "SUSPEND" && userId === actorUserId) throw new ForbiddenException("You cannot suspend your own platform account here.");
+    const targetStatus = body.action === "SUSPEND" ? "SUSPENDED" : "ACTIVE";
+    const now = new Date();
+
+    return this.prisma.$transaction(async (transaction) => {
+      const current = await transaction.user.findUnique({
+        where: { id: userId },
+        select: { id: true, displayName: true, status: true },
+      });
+      if (!current) throw new NotFoundException("Staff account not found.");
+      const [patientMembership, platformMembership] = await Promise.all([
+        transaction.membership.findFirst({ where: { userId: current.id, role: "PATIENT" }, select: { id: true } }),
+        transaction.membership.findFirst({ where: { userId: current.id, role: { in: ["SUPER_ADMIN", "PLATFORM_ADMIN"] } }, select: { id: true } }),
+      ]);
+      if (patientMembership) {
+        throw new ForbiddenException("Accounts linked to patient access must be managed through the patient account recovery procedure.");
+      }
+      if (platformMembership) {
+        throw new ForbiddenException("Platform administrator accounts must be managed through a separate recovery procedure.");
+      }
+      if (current.status === targetStatus) return { account: { id: current.id, displayName: current.displayName, status: current.status }, changed: false, revokedSessions: 0 };
+      if (current.status !== "ACTIVE" && current.status !== "SUSPENDED") {
+        throw new ConflictException("Only active or suspended accounts can change status.");
+      }
+
+      const changed = await transaction.user.updateMany({ where: { id: current.id, status: current.status }, data: { status: targetStatus } });
+      if (changed.count !== 1) throw new ConflictException("Account status changed concurrently. Refresh and try again.");
+      const revoked = body.action === "SUSPEND"
+        ? await transaction.session.updateMany({ where: { userId: current.id, revokedAt: null, expiresAt: { gt: now } }, data: { revokedAt: now } })
+        : { count: 0 };
+      if (body.action === "SUSPEND") {
+        await transaction.loginVerificationCode.updateMany({ where: { userId: current.id, usedAt: null }, data: { usedAt: now } });
+      }
+      await transaction.auditEvent.create({
+        data: {
+          actorUserId,
+          action: body.action === "SUSPEND" ? "platform.staff_account_suspended" : "platform.staff_account_reactivated",
+          resourceType: "user_account",
+          resourceId: current.id,
+          reason,
+          metadata: { from: current.status, to: targetStatus, revokedSessions: revoked.count } as Prisma.InputJsonObject,
+        },
+      });
+      return { account: { id: current.id, displayName: current.displayName, status: targetStatus }, changed: true, revokedSessions: revoked.count };
+    });
   }
 
   @Get("subscriptions")

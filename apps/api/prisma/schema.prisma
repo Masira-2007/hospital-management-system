@@ -259,6 +259,7 @@ model Membership {
   hospital       Hospital?      @relation(fields: [hospitalId, organizationId], references: [id, organizationId], onDelete: Restrict)
   branch         Branch?        @relation(fields: [branchId, hospitalId], references: [id, hospitalId], onDelete: Restrict)
   appointments   Appointment[]  @relation("AppointmentDoctor")
+  activeSessions Session[]     @relation("SessionActiveMembership")
 
   @@unique([userId, organizationId, hospitalId, branchId, role])
   @@unique([id, organizationId])
@@ -344,8 +345,11 @@ model Session {
   createdAt DateTime  @default(now())
   lastUsedAt DateTime?
   user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  activeMembershipId String?
+  activeMembership   Membership? @relation("SessionActiveMembership", fields: [activeMembershipId], references: [id], onDelete: SetNull)
 
   @@index([userId, expiresAt])
+  @@index([activeMembershipId])
 }
 
 model PasswordResetToken {
