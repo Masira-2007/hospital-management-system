@@ -3,6 +3,7 @@ import { requirePlatformIdentity } from "@/lib/platform-auth";
 import { PlatformDashboard } from "@/components/onboarding-forms";
 import "../auth.css";
 import "../onboarding.css";
+import "./dashboard.css";
 
 export const metadata: Metadata = { title: "Platform administration | JR Xpert HMS", robots: { index: false, follow: false } };
 export const dynamic = "force-dynamic";

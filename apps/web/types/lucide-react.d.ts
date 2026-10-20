@@ -42,6 +42,7 @@ declare module "lucide-react" {
   export const Package: LucideIcon;
   export const Pill: LucideIcon;
   export const Plus: LucideIcon;
+  export const RefreshCw: LucideIcon;
   export const Search: LucideIcon;
   export const Settings2: LucideIcon;
   export const ShieldCheck: LucideIcon;

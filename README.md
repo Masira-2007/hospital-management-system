@@ -14,7 +14,7 @@ JR Xpert HMS is an in-progress, multi-hospital healthcare platform. The public d
 - Google and Apple sign-in endpoints and buttons are not included. Login sessions have a fixed 12-hour lifetime; users cannot extend session duration from the login request.
 - Hospital application submission and email verification, email-code-authenticated platform review APIs, provisioning of organizations/hospitals/branches, one-time hospital administrator invitations, and invitation acceptance with mandatory TOTP enrollment. Setup tokens are claimed atomically and cannot be replayed to replace password/MFA setup. Parallel applications using the same official email are serialized inside a PostgreSQL transaction to prevent duplicate hospital provisioning. The UI includes hospital registration, email verification, invitation setup, and a protected Super Admin onboarding dashboard.
 - A first-Super-Admin bootstrap script that sends a one-time email setup link, followed by a six-digit code to the same email for activation. Setup codes are single-use and hashed at rest; no default administrator credentials or bootstrap tokens are printed. Super Admin dashboard access is limited to an active platform-scoped membership after the email-code login.
-- A protected Super Admin dashboard for hospital onboarding and platform operations, with paginated audit summaries. Patient-directory access trails stay tenant-scoped and audit metadata is not exposed.
+- A protected Super Admin dashboard for hospital onboarding and platform operations, with section navigation, service health, searchable/paginated hospital, staff and subscription lists, reasoned suspension/reactivation, invitation resend/revocation, and a paginated audit feed. Patient-directory access trails stay tenant-scoped and audit metadata is not exposed.
 - A protected, read-only `/patient` portal for signed-in patient accounts. It requires a selected patient membership, retrieves records only through active explicit patient-access grants in the API, and displays limited identity fields with no-store caching. It does not expose clinical notes, results, prescriptions, appointments, or billing.
 - Paginated, searchable Super Admin staff-account access operations. Patient-only and mixed patient/staff accounts and platform admins are excluded. Suspension is global across a staff account’s hospital memberships, revokes active sessions and pending email login codes, and records a reasoned audit event transactionally. Login session creation rechecks account status under a row lock to prevent suspension races.
 - A server-guarded `/super-admin/security` page to review this administrator account’s active sessions, revoke one device, or revoke every other session. Session management data is returned only for the authenticated account, session changes and their audit events commit atomically, and session tokens are never displayed.
@@ -57,6 +57,21 @@ npm run build
 ```
 
 If a local Next dev server holds `.next` open, run a separate verification build with `$env:NEXT_DIST_DIR='.next-verify'; npm run build`.
+
+### Two-hospital tenant-isolation integration test
+
+This test is optional and requires Docker Desktop. It creates only synthetic records in the dedicated local `jr_xpert_hms_test` database. It refuses remote hosts or a database with any other name. It does not connect to Neon or Vercel.
+
+```powershell
+docker compose up -d postgres-test
+$env:DIRECT_URL='postgresql://jr_xpert_test_owner:jr_xpert_test_owner_dev@127.0.0.1:5433/jr_xpert_hms_test?schema=public'
+$env:TENANT_ISOLATION_TEST_OWNER_URL=$env:DIRECT_URL
+$env:TENANT_ISOLATION_TEST_APP_URL='postgresql://jr_xpert_app:jr_xpert_app_test@127.0.0.1:5433/jr_xpert_hms_test?schema=public'
+npm run db:migrate:deploy --workspace @jr-xpert/api
+npm run test:tenant-isolation --workspace @jr-xpert/api
+```
+
+The test checks that a non-superuser, non-`BYPASSRLS` runtime role can read only its own hospital’s patient and appointment rows, that forged tenant context still cannot access another tenant’s rows, and that unauthorized writes are rejected. A historical migration grants database CONNECT to Neon’s default `neondb`; the isolated local fixture creates an inert local database with that name solely to keep the applied migration history immutable. The test refuses remote database URLs. If its two local URLs are missing, it reports a clear skip with setup guidance instead of failing during module loading. Docker/PostgreSQL is not installed in the current development environment, so the SQL isolation assertions still need to be run on a machine with Docker Desktop or a local PostgreSQL server.
 
 ## Neon and Vercel setup
 

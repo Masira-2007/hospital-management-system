@@ -404,20 +404,20 @@ export class PlatformController {
   }
 
   @Post("invitations/:invitationId/resend")
-  @ApiOperation({ summary: "Rotate and resend a pending hospital administrator invitation" })
+  @ApiOperation({ summary: "Rotate and resend a pending or revoked hospital administrator invitation" })
   async resendInvitation(@Param("invitationId") invitationId: string, @Req() request: RequestLike) {
     const invitation = await this.prisma.hospitalInvitation.findUnique({ where: { id: invitationId } });
-    if (!invitation || invitation.status !== "PENDING") throw new NotFoundException("Pending invitation not found.");
+    if (!invitation || (invitation.status !== "PENDING" && invitation.status !== "REVOKED")) throw new NotFoundException("An outstanding or revoked invitation was not found.");
     const token = createSessionToken();
     const expiresAt = new Date(Date.now() + INVITATION_LIFETIME_MS);
     const updated = await this.prisma.$transaction(async (transaction) => {
       const current = await transaction.hospitalInvitation.updateMany({
-        where: { id: invitation.id, status: "PENDING" },
-        data: { tokenHash: hashSessionToken(token), expiresAt, deliveryStatus: "PENDING", preparedAt: null, preparedUserId: null },
+        where: { id: invitation.id, status: invitation.status },
+        data: { status: "PENDING", tokenHash: hashSessionToken(token), expiresAt, deliveryStatus: "PENDING", preparedAt: null, preparedUserId: null, revokedAt: null },
       });
       if (current.count !== 1) throw new ConflictException("This invitation changed. Refresh and try again.");
       await transaction.auditEvent.create({
-        data: { actorUserId: request.authSession!.user.id, organizationId: invitation.organizationId, action: "hospital.invitation_resent", resourceType: "hospital_invitation", resourceId: invitation.id },
+        data: { actorUserId: request.authSession!.user.id, organizationId: invitation.organizationId, action: invitation.status === "REVOKED" ? "hospital.invitation_reissued" : "hospital.invitation_resent", resourceType: "hospital_invitation", resourceId: invitation.id },
       });
       return transaction.hospitalInvitation.findUniqueOrThrow({ where: { id: invitation.id }, select: { id: true, intendedEmail: true, organizationId: true, status: true, expiresAt: true } });
     });

@@ -14,6 +14,22 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+  postgres-test:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: jr_xpert_hms_test
+      POSTGRES_USER: jr_xpert_test_owner
+      POSTGRES_PASSWORD: jr_xpert_test_owner_dev
+    ports:
+      - "127.0.0.1:5433:5432"
+    volumes:
+      - postgres_test_data:/var/lib/postgresql/data
+      - ./docker/postgres-test-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U jr_xpert_test_owner -d jr_xpert_hms_test"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
   redis:
     image: redis:7-alpine
     ports:
@@ -27,4 +43,5 @@ services:
       retries: 10
 volumes:
   postgres_data:
+  postgres_test_data:
   redis_data:

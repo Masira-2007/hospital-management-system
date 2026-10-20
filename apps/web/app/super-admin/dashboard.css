@@ -1,0 +1,15 @@
+.platform-nav{position:sticky;top:0;z-index:5;margin:22px 0 14px;padding:8px;display:flex;gap:5px;overflow-x:auto;border:1px solid #e1ebf0;border-radius:11px;background:#ffffffed;backdrop-filter:blur(10px);box-shadow:0 4px 14px #173b5708;scrollbar-width:thin}
+.platform-nav a{flex:none;padding:9px 12px;border-radius:7px;color:#527187;font-size:10px;font-weight:650;text-decoration:none;white-space:nowrap}
+.platform-nav a:hover,.platform-nav a:focus-visible{background:#eaf7f8;color:#087f8b;outline:2px solid #14b8d455;outline-offset:1px}
+.platform-toolbar{margin:0 0 10px;display:flex;align-items:center;justify-content:flex-end;gap:12px;color:#8195a4;font-size:9px}
+.platform-toolbar button{min-height:34px;padding:0 10px;display:inline-flex;align-items:center;gap:7px;border:1px solid #dce8ef;border-radius:8px;background:#fff;color:#345b74;font-size:10px;font-weight:650;cursor:pointer}
+.platform-toolbar button:disabled{opacity:.6;cursor:wait}
+.platform-refreshing{animation:platform-rotation 1s linear infinite}
+.platform-metrics,.platform-list-heading, .platform-audit, #staff-access,#subscriptions{scroll-margin-top:72px}
+.platform-error-retry{margin-left:9px;border:0;background:transparent;color:#087f8b;font:inherit;font-weight:700;text-decoration:underline;cursor:pointer}
+.platform-invitation-status>div{display:flex;align-items:center;gap:7px}
+.platform-invitation-status .platform-revoke-invite{border:1px solid #f0d0d4;background:#fff7f8;color:#a94251}
+.platform-hospital-tools form button{white-space:nowrap}
+@keyframes platform-rotation{to{transform:rotate(360deg)}}
+@media(max-width:720px){.platform-nav{margin:16px 0 12px;padding:6px}.platform-nav a{padding:9px 10px}.platform-toolbar{justify-content:space-between}.platform-invitation-status>div{width:100%;align-items:stretch;flex-direction:column}.platform-invitation-status>div button{min-height:38px}}
+@media(prefers-reduced-motion:reduce){.platform-refreshing{animation:none}}

@@ -326,6 +326,44 @@ test("provisioning hospitals cannot be suspended or reactivated from the platfor
   assert.equal(auditCount, 0);
 });
 
+test("a revoked hospital invitation can be safely reissued with a fresh token and expiry", async () => {
+  const expiresAt = new Date(Date.now() + 60_000);
+  let updateArgs: Record<string, unknown> | undefined;
+  let auditAction = "";
+  const transaction = {
+    hospitalInvitation: {
+      updateMany: async (args: Record<string, unknown>) => { updateArgs = args; return { count: 1 }; },
+      findUniqueOrThrow: async () => ({ id: "invite-1", intendedEmail: "admin@example.test", organizationId: "org-1", status: "PENDING", expiresAt }),
+    },
+    auditEvent: { create: async ({ data }: { data: { action: string } }) => { auditAction = data.action; } },
+  };
+  const prisma = {
+    hospitalInvitation: {
+      findUnique: async () => ({ id: "invite-1", organizationId: "org-1", status: "REVOKED" }),
+      update: async () => undefined,
+    },
+    auditEvent: { create: async () => undefined },
+    $transaction: async (operation: unknown) => Array.isArray(operation)
+      ? Promise.all(operation)
+      : (operation as (tx: typeof transaction) => Promise<unknown>)(transaction),
+  };
+  const controller = new PlatformController(
+    prisma as never,
+    { sendHospitalAdminInvitation: async () => undefined } as never,
+  );
+  const result = await controller.resendInvitation("invite-1", { authSession: { user: { id: "admin-1" } } } as never);
+  const update = updateArgs?.data as { status: string; tokenHash: string; expiresAt: Date; preparedAt: null; preparedUserId: null; revokedAt: null };
+  assert.deepEqual(updateArgs?.where, { id: "invite-1", status: "REVOKED" });
+  assert.equal(update.status, "PENDING");
+  assert.equal(update.tokenHash.length, 64);
+  assert.ok(update.expiresAt.getTime() > Date.now());
+  assert.equal(update.preparedAt, null);
+  assert.equal(update.preparedUserId, null);
+  assert.equal(update.revokedAt, null);
+  assert.equal(auditAction, "hospital.invitation_reissued");
+  assert.equal(result.invitation.deliveryStatus, "SENT");
+});
+
 test("platform hospital search is paginated and returns only operational metadata", async () => {
   let findArgs: Record<string, unknown> | undefined;
   let countWhere: unknown;
