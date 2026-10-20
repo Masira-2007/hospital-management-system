@@ -224,6 +224,41 @@ test("password login rejects a patient account in hospital mode with a generic e
   assert.equal(failedAudit, true);
 });
 
+test("hospital portal does not issue a login code to a platform-only administrator", async () => {
+  const passwordHash = await hashPassword("correct horse battery 927!");
+  let codeSent = false;
+  let failedAudit = false;
+  const prisma = {
+    authRateLimit: {
+      findUnique: async () => null,
+      upsert: async () => ({ failedAttempts: 1 }),
+    },
+    user: { findUnique: async () => ({
+      id: "admin-1", email: "admin@example.test", displayName: "Platform Admin", status: "ACTIVE", emailVerifiedAt: new Date(),
+      passwordHash, mfaEnabled: false, mfaSecretEncrypted: null, mfaLastUsedCounter: null,
+      memberships: [{ id: "platform-membership", role: "SUPER_ADMIN", hospital: null, branch: null }],
+    }) },
+    auditEvent: { create: async () => { failedAudit = true; return {}; } },
+  };
+  const controller = new AuthController(prisma as never, {
+    isEmailDeliveryConfigured: () => true,
+    sendLoginVerificationCode: async () => { codeSent = true; },
+  } as never);
+
+  await assert.rejects(() => controller.login(
+    { email: "admin@example.test", password: "correct horse battery 927!", mode: "HOSPITAL" },
+    request,
+    { setHeader: () => undefined },
+  ), (error: unknown) => {
+    assert.ok(error instanceof UnauthorizedException);
+    assert.equal(error.getStatus(), 401);
+    assert.equal(JSON.stringify(error.getResponse()).includes("admin@example.test"), false);
+    return true;
+  });
+  assert.equal(codeSent, false);
+  assert.equal(failedAudit, true);
+});
+
 test("password recovery reports missing email configuration instead of pretending to send", async () => {
   const controller = new AuthController({} as never, { isConfigured: () => false } as never);
   await assert.rejects(() => controller.requestPasswordReset({ email: "patient@example.test" }, request), (error: unknown) => {

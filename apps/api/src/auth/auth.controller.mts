@@ -93,11 +93,13 @@ export class AuthController {
     const passwordIsValid = user
       ? await verifyPassword(body.password, user.passwordHash)
       : false;
-    const allowedMemberships = user?.memberships.filter(({ role }) => mode === "PATIENT"
-      ? role === "PATIENT"
-      : mode === "SUPER_ADMIN"
-        ? role === "SUPER_ADMIN" || role === "PLATFORM_ADMIN"
-        : role !== "PATIENT") ?? [];
+    const allowedMemberships = user?.memberships.filter(({ role, hospital, branch }) => {
+      if (mode === "PATIENT") return role === "PATIENT";
+      if (mode === "SUPER_ADMIN") {
+        return (role === "SUPER_ADMIN" || role === "PLATFORM_ADMIN") && !hospital && !branch;
+      }
+      return role !== "PATIENT" && role !== "SUPER_ADMIN" && role !== "PLATFORM_ADMIN";
+    }) ?? [];
     const accountIsValid = Boolean(user && user.status === "ACTIVE" && user.emailVerifiedAt && allowedMemberships.length > 0);
     if (!passwordIsValid || !accountIsValid || !user) {
       await this.recordAuthenticationFailure(keys, user?.id);
