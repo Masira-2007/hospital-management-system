@@ -5,6 +5,7 @@ import { AuthController } from "../src/auth/auth.controller.mjs";
 import { hashEmailVerificationCode, hashPassword } from "../src/security/security.crypto.mjs";
 
 const request = { headers: { "user-agent": "unit-test" }, ip: "127.0.0.1" };
+const rateLimitDatabase = { $queryRaw: async () => [{ failedAttempts: 1 }] };
 
 test("patient login sends a one-time email code and creates a 12-hour session only after code verification", async () => {
   const passwordHash = await hashPassword("correct horse battery 927!");
@@ -21,6 +22,7 @@ test("patient login sends a one-time email code and creates a 12-hour session on
     branch: null,
   };
   const prisma = {
+    ...rateLimitDatabase,
     authRateLimit: {
       findUnique: async () => null,
       upsert: async () => ({ failedAttempts: 1 }),
@@ -99,6 +101,7 @@ test("account suspension between email code delivery and login blocks session cr
   let sessionCreated = false;
   let failureAudited = false;
   const prisma = {
+    ...rateLimitDatabase,
     authRateLimit: { findUnique: async () => null, upsert: async () => ({ failedAttempts: 1 }) },
     user: { findUnique: async () => ({ id: "staff-1", email: "staff@example.test", displayName: "Staff", status: "ACTIVE", emailVerifiedAt: new Date(), passwordHash, memberships: [{ id: "member-1", role: "HOSPITAL_ADMIN" }] }) },
     loginVerificationCode: {
@@ -127,6 +130,7 @@ test("super-admin login uses email verification rather than requiring an authent
   let storedChallenge: Record<string, unknown> | undefined;
   const membership = { id: "member-admin", role: "SUPER_ADMIN", department: null, organization: { id: "org-1", name: "JR Xpert", slug: "jr-xpert" }, hospital: null, branch: null };
   const prisma = {
+    ...rateLimitDatabase,
     authRateLimit: { findUnique: async () => null, upsert: async () => ({ failedAttempts: 1 }), deleteMany: async () => ({ count: 1 }) },
     user: { findUnique: async () => ({ id: "admin-1", email: "admin@example.test", displayName: "Admin", status: "ACTIVE", emailVerifiedAt: new Date(), passwordHash, mfaEnabled: true, mfaSecretEncrypted: "unused", mfaLastUsedCounter: null, memberships: [membership] }) },
     loginVerificationCode: {
@@ -156,6 +160,7 @@ test("super-admin login uses email verification rather than requiring an authent
 test("login never reports a successful first step when email delivery is not configured", async () => {
   const passwordHash = await hashPassword("correct horse battery 927!");
   const prisma = {
+    ...rateLimitDatabase,
     authRateLimit: { findUnique: async () => null, upsert: async () => ({ failedAttempts: 1 }) },
     user: { findUnique: async () => ({
       id: "user-1", email: "staff@example.test", displayName: "Staff", status: "ACTIVE", emailVerifiedAt: new Date(),
@@ -176,6 +181,7 @@ test("an incorrect email code is rate-counted and cannot create a session", asyn
   let failedAudit = false;
   let sessionCreated = false;
   const prisma = {
+    ...rateLimitDatabase,
     authRateLimit: { findUnique: async () => null, upsert: async () => ({ failedAttempts: 1 }) },
     user: { findUnique: async () => ({ id: "user-1", email: "staff@example.test", displayName: "Staff", status: "ACTIVE", emailVerifiedAt: new Date(), passwordHash, memberships: [{ id: "member-1", role: "HOSPITAL_ADMIN", organization: { id: "org-1", name: "Hospital", slug: "hospital" }, hospital: null, branch: null }] }) },
     loginVerificationCode: {
@@ -199,6 +205,7 @@ test("password login rejects a patient account in hospital mode with a generic e
   const passwordHash = await hashPassword("correct horse battery 927!");
   let failedAudit = false;
   const prisma = {
+    ...rateLimitDatabase,
     authRateLimit: {
       findUnique: async () => null,
       upsert: async () => ({ failedAttempts: 1 }),
@@ -229,6 +236,7 @@ test("hospital portal does not issue a login code to a platform-only administrat
   let codeSent = false;
   let failedAudit = false;
   const prisma = {
+    ...rateLimitDatabase,
     authRateLimit: {
       findUnique: async () => null,
       upsert: async () => ({ failedAttempts: 1 }),
@@ -274,6 +282,7 @@ test("password reset consumes a one-use token and safely rejects reuse", async (
   let passwordUpdated = false;
   let sessionsRevoked = false;
   const prisma = {
+    ...rateLimitDatabase,
     authRateLimit: {
       findUnique: async () => null,
       upsert: async () => ({ failedAttempts: 1 }),
@@ -303,6 +312,7 @@ test("password reset consumes a one-use token and safely rejects reuse", async (
 
 test("password reset rejects an expired token", async () => {
   const prisma = {
+    ...rateLimitDatabase,
     authRateLimit: {
       findUnique: async () => null,
       upsert: async () => ({ failedAttempts: 1 }),

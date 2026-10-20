@@ -4,8 +4,6 @@ import {
   Delete,
   ForbiddenException,
   Get,
-  HttpException,
-  HttpStatus,
   HttpCode,
   Param,
   Post,
@@ -37,6 +35,7 @@ import { SelectMembershipDto } from "./select-membership.dto.mjs";
 import { EmailDeliveryService } from "./email-delivery.service.mjs";
 import { getHeader, type RequestLike, type ResponseLike } from "./auth.types.mjs";
 import { SessionAuthGuard, sessionCookieName } from "./session-auth.guard.mjs";
+import { consumeFixedWindowLimit } from "../security/rate-limit.mjs";
 
 const SESSION_DURATION_MS = 12 * 60 * 60 * 1000;
 const PASSWORD_RESET_DURATION_MS = 20 * 60 * 1000;
@@ -52,8 +51,6 @@ const authenticationFailure = () => new UnauthorizedException({
 @ApiTags("authentication")
 @Controller("auth")
 export class AuthController {
-  private throttleCleanupCounter = 0;
-
   constructor(
     private readonly prisma: PrismaService,
     private readonly emailDelivery: EmailDeliveryService,
@@ -549,30 +546,7 @@ export class AuthController {
   }
 
   private async consumeLoginAttempt(keys: string[]) {
-    const now = Date.now();
-    this.throttleCleanupCounter += 1;
-    if (this.throttleCleanupCounter % 100 === 0) {
-      await this.prisma.authRateLimit.deleteMany({
-        where: { windowStartedAt: { lt: new Date(now - 24 * 60 * 60 * 1000) } },
-      });
-    }
-    const timestamp = new Date(now);
-    for (const keyHash of keys) {
-      const existing = await this.prisma.authRateLimit.findUnique({ where: { keyHash } });
-      const row = existing && now - existing.windowStartedAt.getTime() < RATE_WINDOW_MS
-        ? await this.prisma.authRateLimit.update({
-            where: { keyHash },
-            data: { failedAttempts: { increment: 1 } },
-          })
-        : await this.prisma.authRateLimit.upsert({
-            where: { keyHash },
-            create: { keyHash, failedAttempts: 1, windowStartedAt: timestamp },
-            update: { failedAttempts: 1, windowStartedAt: timestamp },
-          });
-      if (row.failedAttempts > MAX_FAILED_ATTEMPTS) {
-        throw new HttpException("Too many sign-in attempts. Try again later.", HttpStatus.TOO_MANY_REQUESTS);
-      }
-    }
+    await consumeFixedWindowLimit(this.prisma, keys, MAX_FAILED_ATTEMPTS, RATE_WINDOW_MS / 60_000);
   }
 
   private async recordAuthenticationFailure(keys: string[], userId?: string) {
