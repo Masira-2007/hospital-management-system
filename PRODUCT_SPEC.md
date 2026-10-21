@@ -78,7 +78,7 @@ This document tracks the user-provided master prompt. It is a scope record, not 
 
 ### Current operational status — 2026-10-21
 
-- Public production checks on 2026-10-21 confirm `/api/v1/health/ready` reports `ready`, `/login`, `/super-admin/login`, and `/forgot-password` render successfully, and recent Vercel runtime logs show successful page responses with zero warning/error/fatal entries. The current production deployment is `ETmC7GdtSh3vgp9fd23W5zv7cZAx` for commit `26399d2`, Ready on `main` and assigned to `hms.jrxpert.in`.
+- Public production checks on 2026-10-21 confirm `/api/v1/health/ready` reports `ready`, `/login`, `/super-admin/login`, and `/forgot-password` render successfully, and recent Vercel runtime logs show successful page responses with zero warning/error/fatal entries. The latest deployment on `main` is Ready and `hms.jrxpert.in` is assigned to production.
 - Resend DNS for `hms.jrxpert.in` is verified. The earlier exposed key was revoked; a fresh sending-only key and `AUTH_EMAIL_FROM=JR Xpert <no-reply@hms.jrxpert.in>` are configured in Vercel Production. A reserved `.invalid` recovery probe returns the generic confirmation, confirming the previous setup error is gone. Real delivery, email-code sign-in, a recovery completion, and the signed-in dashboard have not yet been verified.
 - GitHub Actions run [39465044781](https://github.com/Masira-2007/hospital-management-system/actions/runs/39465044781) passed the two-hospital SQL isolation test against synthetic data (1 passed, 0 failed, 0 skipped). Authenticated login/dashboard browser flow, actual email delivery, first-admin bootstrap, backup restoration and independent security review remain outstanding. Do not use real patient records.
 
