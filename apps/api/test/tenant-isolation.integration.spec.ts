@@ -227,8 +227,10 @@ test("two synthetic hospitals cannot read or modify each other's patient or appo
       ));
       await expectDenied(client, () => client.query(`UPDATE "Patient" SET "firstName" = 'Modified' WHERE "id" = $1`, [patientB]));
       await expectDenied(client, () => client.query(`DELETE FROM "Patient" WHERE "id" = $1`, [patientB]));
-      await expectDenied(client, () => client.query(`UPDATE "Appointment" SET "status" = 'COMPLETED' WHERE "id" = $1`, [appointmentB]));
-      await expectDenied(client, () => client.query(`UPDATE "Appointment" SET "status" = 'CANCELLED' WHERE "id" = $1`, [appointmentB]));
+      const completed = await client.query(`UPDATE "Appointment" SET "status" = 'COMPLETED' WHERE "id" = $1 RETURNING "id"`, [appointmentB]);
+      assert.equal(completed.rowCount, 0, "Forged tenant context cannot transition another hospital's appointment.");
+      const cancelled = await client.query(`UPDATE "Appointment" SET "status" = 'CANCELLED' WHERE "id" = $1 RETURNING "id"`, [appointmentB]);
+      assert.equal(cancelled.rowCount, 0, "The cancellation grant remains restricted by hospital membership RLS.");
     });
   } finally {
     try {
