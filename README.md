@@ -2,7 +2,7 @@
 
 **Better Care. Smarter Management. Healthier Tomorrow.**
 
-JR Xpert HMS is an in-progress, multi-hospital healthcare platform. The public dashboard remains a visual preview using fictional sample records. Backend onboarding, authentication, and a read-only patient self-service API are implemented; production migrations are applied and Neon runtime-role/RLS configuration is verified. Resend is now configured in Vercel Production and the updated deployment is Ready, but actual email delivery and authenticated workflows still need verification before any real patient information is used.
+JR Xpert HMS is an in-progress, multi-hospital healthcare platform. The public dashboard remains a visual preview using fictional sample records. Backend onboarding, authentication, and a read-only patient self-service API are implemented; all 16 production migrations are applied and Neon runtime-role/RLS configuration is verified. Resend is configured in Vercel Production, but actual email delivery and authenticated workflows still need verification before any real patient information is used.
 
 ## What is implemented
 
@@ -25,7 +25,8 @@ JR Xpert HMS is an in-progress, multi-hospital healthcare platform. The public d
 - Patient-directory read endpoint with role-permission lookup, verified tenant membership, a limited field set, bounded search/pagination, access auditing, and transaction-scoped PostgreSQL row-level security.
 - Read-only `GET /api/v1/patients/me` for authenticated patient accounts, requiring an active hospital membership and explicit non-revoked, non-expired record-access grant. The query is limited to the selected organization/hospital/branch, returns only basic identity fields, and audits the aggregate result count without recording patient identifiers.
 - Patient registration endpoint for authorized hospital staff, with strict demographic validation, a server-generated MRN, server-derived tenant scope, an explicit role permission, transaction-local forced RLS, a limited INSERT grant, and audit metadata that excludes patient demographics. No update/delete permission is granted to the runtime role.
-- Appointment list and requested-booking API with explicit permissions, verified patient/doctor membership, branch-derived scope, audit events, appointment RLS, restricted runtime insert columns, and a database-level clinician overlap constraint. The visible schedule remains a fictional preview and is not wired to these APIs.
+- Appointment list, requested-booking, cancellation, and rescheduling APIs with explicit permissions, verified patient/doctor membership, branch-derived scope, categorical audit events, appointment RLS, restricted runtime columns, duration limits, and a database-level clinician overlap constraint. The visible schedule remains a fictional preview and is not wired to these APIs.
+- Remote PostgreSQL URLs are normalized to `sslmode=verify-full`; a remote URL with TLS disabled or a weaker unsupported SSL mode is rejected. This preserves the current secure Neon behavior across future `pg-connection-string` major versions.
 - Append-only audit-event triggers and a database readiness endpoint that returns no connection details.
 - Prisma migrations and safe placeholder environment configuration.
 
@@ -35,7 +36,7 @@ Production was checked on 2026-10-21 at [hms.jrxpert.in](https://hms.jrxpert.in)
 
 `.github/workflows/ci.yml` provisions an ephemeral PostgreSQL service, applies the migrations with test-only credentials, and runs the two-hospital isolation test using synthetic fixtures. GitHub Actions run [39465044781](https://github.com/Masira-2007/hospital-management-system/actions/runs/39465044781) passed, including the cross-hospital read/write isolation test (1 passed, 0 failed, 0 skipped). This CI test is synthetic and does not replace authenticated production-path tests or an independent security review.
 
-Other unfinished scope includes clinical EMR reads/writes, appointment availability/reschedule/cancel/check-in/queues, nursing/ward/OT workflows, pharmacy, laboratory, billing and payments, insurance, inventory, HR/payroll, mobile apps, notifications beyond account recovery/onboarding, AI workflows, production monitoring/backups, and cross-tenant end-to-end testing against a dedicated non-production PostgreSQL database. This is not a complete HMS or a compliance certification.
+Other unfinished scope includes clinical EMR reads/writes, appointment availability/check-in/queues and schedule UI, nursing/ward/OT workflows, pharmacy, laboratory, billing and payments, insurance, inventory, HR/payroll, mobile apps, notifications beyond account recovery/onboarding, AI workflows, production monitoring/backups, successful authenticated email-code end-to-end tests, and an independent security review. This is not a complete HMS or a compliance certification.
 
 ## Local development
 
@@ -74,7 +75,7 @@ npm run db:migrate:deploy --workspace @jr-xpert/api
 npm run test:tenant-isolation --workspace @jr-xpert/api
 ```
 
-The test checks that a non-superuser, non-`BYPASSRLS` runtime role can read only its own hospital’s patient and appointment rows, that forged tenant context still cannot access another tenant’s rows, and that unauthorized writes are rejected. A historical migration grants database CONNECT to Neon’s default `neondb`; the isolated local fixture creates an inert local database with that name solely to keep the applied migration history immutable. The test refuses remote database URLs. If its two local URLs are missing, it reports a clear skip with setup guidance instead of failing during module loading. Docker/PostgreSQL is not installed in the current development environment, so the SQL isolation assertions still need to be run on a machine with Docker Desktop or a local PostgreSQL server.
+The test checks that a non-superuser, non-`BYPASSRLS` runtime role can read only its own hospital’s patient and appointment rows, that forged tenant context still cannot access another tenant’s rows, and that unauthorized writes are rejected. It also verifies permitted appointment cancellation and rescheduling. A historical migration grants database CONNECT to Neon’s default `neondb`; the isolated local fixture creates an inert local database with that name solely to keep the applied migration history immutable. The test refuses remote database URLs. If its two local URLs are missing, it reports a clear skip with setup guidance instead of failing during module loading. GitHub CI runs the assertions against an ephemeral PostgreSQL service; local Docker/PostgreSQL is not configured in this development environment.
 
 ## Neon and Vercel setup
 
@@ -90,7 +91,7 @@ The monorepo contains two separately deployable applications. Vercel documents N
 
 Production API startup also requires `DATABASE_URL`, an HTTPS `APP_URL` included in the exact `WEB_ORIGIN` allowlist, a unique 32+ character `AUTH_RATE_LIMIT_SECRET`, and a 32-byte hexadecimal `MFA_ENCRYPTION_KEY`. Use a least-privilege runtime database role that is neither superuser nor `BYPASSRLS`; `FORCE ROW LEVEL SECURITY` cannot constrain those privileged PostgreSQL roles. Use separate preview/staging/production credentials and databases.
 
-No Neon connection string or Vercel secret is stored in this repository. Neon migration status and the read-only runtime-role verifier were run successfully for all 13 migrations; the verifier checks session-scope permissions, forced Patient/PatientAccessGrant RLS, patient grant policies and restricted runtime-role attributes. API unit tests and builds do not substitute for cross-tenant end-to-end tests. Email delivery, first administrator bootstrap, live authenticated login and isolation proof against a dedicated non-production database have not been verified in this workspace.
+No Neon connection string or Vercel secret is stored in this repository. Neon migration status and the read-only runtime-role verifier were run successfully for all 16 migrations; the verifier checks forced Patient/PatientAccessGrant RLS, patient grant policies, append-only audit inserts, limited appointment update columns, cancellation/rescheduling policies, and the restricted runtime-role attributes. API unit tests and builds do not substitute for authenticated cross-tenant production-path testing. Email delivery, first administrator bootstrap, and successful live authenticated login have not been verified in this workspace.
 
 ## Security notes
 

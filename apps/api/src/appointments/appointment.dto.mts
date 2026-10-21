@@ -39,3 +39,14 @@ export class CancelAppointmentDto {
   @IsIn(APPOINTMENT_CANCELLATION_REASONS)
   reasonCode!: typeof APPOINTMENT_CANCELLATION_REASONS[number];
 }
+
+export class RescheduleAppointmentDto {
+  @IsDateString() @Matches(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?(?:Z|[+-]\d{2}:\d{2})$/)
+  startsAt!: string;
+
+  @IsOptional() @Type(() => Number) @IsInt() @Min(10) @Max(240)
+  durationMinutes?: number;
+
+  @IsIn(["PATIENT_REQUESTED", "CLINICIAN_UNAVAILABLE", "SCHEDULING_ERROR", "OTHER"])
+  reasonCode!: typeof APPOINTMENT_CANCELLATION_REASONS[number];
+}

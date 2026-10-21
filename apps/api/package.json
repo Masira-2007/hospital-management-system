@@ -8,7 +8,7 @@
     "start:dev": "tsx watch src/main.mts",
     "build": "prisma generate && tsc -p tsconfig.build.json",
     "start": "node dist/main.mjs",
-    "test": "tsx --test test/health.spec.ts test/security.spec.ts test/rate-limit.spec.ts test/tenant-membership.spec.ts test/patients.spec.ts test/appointments.spec.ts test/patient-registration.spec.ts test/authentication.spec.ts test/onboarding.spec.ts",
+    "test": "tsx --test test/health.spec.ts test/security.spec.ts test/rate-limit.spec.ts test/tenant-membership.spec.ts test/patients.spec.ts test/appointments.spec.ts test/patient-registration.spec.ts test/authentication.spec.ts test/onboarding.spec.ts test/connection-string.spec.ts",
     "test:tenant-isolation": "tsx --test test/tenant-isolation.integration.spec.ts",
     "db:generate": "prisma generate",
     "db:validate": "prisma validate",

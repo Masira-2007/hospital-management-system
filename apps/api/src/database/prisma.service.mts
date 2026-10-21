@@ -1,6 +1,7 @@
 import { Injectable, OnModuleDestroy } from "@nestjs/common";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "@prisma/client";
+import { securePostgresConnectionString } from "./connection-string.mjs";
 
 @Injectable()
 export class PrismaService extends PrismaClient implements OnModuleDestroy {
@@ -10,7 +11,7 @@ export class PrismaService extends PrismaClient implements OnModuleDestroy {
       throw new Error("DATABASE_URL must be configured before the API can access application data.");
     }
     super({ adapter: new PrismaPg({
-      connectionString,
+      connectionString: securePostgresConnectionString(connectionString),
       max: Number(process.env.DB_POOL_MAX ?? 5),
       idleTimeoutMillis: 10_000,
       connectionTimeoutMillis: 5_000,

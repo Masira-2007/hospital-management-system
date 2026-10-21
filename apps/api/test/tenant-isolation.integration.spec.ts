@@ -206,6 +206,12 @@ test("two synthetic hospitals cannot read or modify each other's patient or appo
       assert.deepEqual(patientRows.rows.map(({ id }) => id), [patientA]);
       const appointmentRows = await client.query(`SELECT "id" FROM "Appointment" WHERE "id" = ANY($1::text[])`, [[appointmentA, appointmentB]]);
       assert.deepEqual(appointmentRows.rows.map(({ id }) => id), [appointmentA]);
+      const rescheduled = await client.query(
+        `UPDATE "Appointment" SET "startsAt" = $1, "durationMinutes" = 30 WHERE "id" = $2 RETURNING "startsAt", "durationMinutes"`,
+        [new Date(Date.now() + 5 * 24 * 60 * 60 * 1000), appointmentA],
+      );
+      assert.equal(rescheduled.rowCount, 1, "authorized membership can reschedule its own future appointment");
+      assert.equal(rescheduled.rows[0].durationMinutes, 30);
       const cancelled = await client.query(`UPDATE "Appointment" SET "status" = 'CANCELLED' WHERE "id" = $1 RETURNING "status"`, [appointmentA]);
       assert.deepEqual(cancelled.rows.map(({ status }) => status), ["CANCELLED"], "authorized membership can perform the permitted cancellation transition");
     });
@@ -231,6 +237,11 @@ test("two synthetic hospitals cannot read or modify each other's patient or appo
       assert.equal(completed.rowCount, 0, "Forged tenant context cannot transition another hospital's appointment.");
       const cancelled = await client.query(`UPDATE "Appointment" SET "status" = 'CANCELLED' WHERE "id" = $1 RETURNING "id"`, [appointmentB]);
       assert.equal(cancelled.rowCount, 0, "The cancellation grant remains restricted by hospital membership RLS.");
+      const rescheduled = await client.query(
+        `UPDATE "Appointment" SET "startsAt" = NOW() + interval '20 days' WHERE "id" = $1 RETURNING "id"`,
+        [appointmentB],
+      );
+      assert.equal(rescheduled.rowCount, 0, "The reschedule grant remains restricted by hospital membership RLS.");
     });
   } finally {
     try {

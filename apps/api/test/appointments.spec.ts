@@ -4,7 +4,7 @@ import { test } from "node:test";
 import type { RequestLike } from "../src/auth/auth.types.mjs";
 import { PrismaService } from "../src/database/prisma.service.mjs";
 import { AppointmentsController } from "../src/appointments/appointments.controller.mjs";
-import type { AppointmentListDto, CreateAppointmentDto } from "../src/appointments/appointment.dto.mjs";
+import type { AppointmentListDto, CreateAppointmentDto, RescheduleAppointmentDto } from "../src/appointments/appointment.dto.mjs";
 
 function staffRequest(role: "RECEPTIONIST" | "PHARMACIST" = "RECEPTIONIST"): RequestLike {
   return {
@@ -278,4 +278,95 @@ test("appointment cancellation reports a conflict if the status changes concurre
     (error: unknown) => error instanceof ConflictException && error.message.includes("changed"),
   );
   assert.equal(auditAttempts, 0);
+});
+
+test("appointment rescheduling is tenant-scoped, permission-gated, and records only bounded audit metadata", async () => {
+  let scopeQuery: Record<string, unknown> | undefined;
+  let update: Record<string, unknown> | undefined;
+  let audit: Record<string, unknown> | undefined;
+  let rlsApplied = false;
+  const oldStart = new Date(Date.now() + 60 * 60 * 1000);
+  const newStart = new Date(Date.now() + 3 * 60 * 60 * 1000);
+  const prisma = {
+    rolePermission: { findFirst: async ({ where }: { where: Record<string, unknown> }) => ({ permissionId: where.permissionId }) },
+    $transaction: async (callback: (transaction: Record<string, unknown>) => Promise<unknown>) => callback({
+      $queryRaw: async () => { rlsApplied = true; return []; },
+      appointment: {
+        findFirst: async (input: Record<string, unknown>) => { scopeQuery = input; return { id: "appointment-a", startsAt: oldStart, durationMinutes: 20, status: "CONFIRMED" }; },
+        updateMany: async (input: Record<string, unknown>) => { update = input; return { count: 1 }; },
+      },
+      auditEvent: { createMany: async ({ data }: { data: Record<string, unknown> }) => { audit = data; } },
+    }),
+  } as unknown as PrismaService;
+  const controller = new AppointmentsController(prisma);
+  const body = {
+    startsAt: newStart.toISOString(), durationMinutes: 45, reasonCode: "PATIENT_REQUESTED",
+    organizationId: "forged-org", hospitalId: "forged-hospital", patientId: "forged-patient",
+  } as RescheduleAppointmentDto;
+
+  const result = await controller.reschedule("appointment-a", body, staffRequest());
+
+  assert.deepEqual(scopeQuery?.where, { id: "appointment-a", organizationId: "org-a", hospitalId: "hospital-a", branchId: "branch-a" });
+  assert.equal(rlsApplied, true);
+  assert.deepEqual(update?.where, {
+    id: "appointment-a", organizationId: "org-a", hospitalId: "hospital-a", branchId: "branch-a",
+    status: "CONFIRMED", startsAt: oldStart, durationMinutes: 20,
+  });
+  assert.deepEqual(update?.data, { startsAt: newStart, durationMinutes: 45, updatedAt: (update?.data as { updatedAt: Date }).updatedAt });
+  assert.equal(audit?.action, "appointment.rescheduled");
+  assert.deepEqual(audit?.metadata, {
+    hospitalId: "hospital-a", branchId: "branch-a", reasonCode: "PATIENT_REQUESTED",
+    startsAt: newStart.toISOString(), durationMinutes: 45,
+  });
+  assert.equal(JSON.stringify(audit).includes("forged"), false);
+  assert.deepEqual(result, { appointment: { id: "appointment-a", status: "CONFIRMED", startsAt: newStart, durationMinutes: 45 }, changed: true });
+});
+
+test("appointment rescheduling requires its dedicated permission and validates time before opening a transaction", async () => {
+  let transactions = 0;
+  const denied = new AppointmentsController({
+    rolePermission: { findFirst: async () => null },
+    $transaction: async () => { transactions += 1; },
+  } as unknown as PrismaService);
+  await assert.rejects(
+    () => denied.reschedule("appointment-a", { startsAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(), reasonCode: "OTHER" }, staffRequest("PHARMACIST")),
+    ForbiddenException,
+  );
+  assert.equal(transactions, 0);
+
+  const allowed = new AppointmentsController({
+    rolePermission: { findFirst: async () => ({ permissionId: "appointment.reschedule" }) },
+    $transaction: async () => { transactions += 1; },
+  } as unknown as PrismaService);
+  await assert.rejects(
+    () => allowed.reschedule("appointment-a", { startsAt: "2030-01-01T12:00:00", reasonCode: "OTHER" }, staffRequest()),
+    BadRequestException,
+  );
+  assert.equal(transactions, 0);
+});
+
+test("appointment rescheduling hides guessed cross-tenant IDs and returns safe schedule conflicts", async () => {
+  let updateAttempts = 0;
+  const scoped = new AppointmentsController({
+    rolePermission: { findFirst: async () => ({ permissionId: "appointment.reschedule" }) },
+    $transaction: async (callback: (transaction: Record<string, unknown>) => Promise<unknown>) => callback({
+      $queryRaw: async () => [],
+      appointment: { findFirst: async () => null, updateMany: async () => { updateAttempts += 1; return { count: 1 }; } },
+      auditEvent: { createMany: async () => undefined },
+    }),
+  } as unknown as PrismaService);
+  await assert.rejects(
+    () => scoped.reschedule("guessed-hospital-b-appointment", { startsAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(), reasonCode: "OTHER" }, staffRequest()),
+    NotFoundException,
+  );
+  assert.equal(updateAttempts, 0);
+
+  const conflict = new AppointmentsController({
+    rolePermission: { findFirst: async () => ({ permissionId: "appointment.reschedule" }) },
+    $transaction: async () => { throw { code: "P2004" }; },
+  } as unknown as PrismaService);
+  await assert.rejects(
+    () => conflict.reschedule("appointment-a", { startsAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(), reasonCode: "OTHER" }, staffRequest()),
+    (error: unknown) => error instanceof ConflictException && !error.message.includes("P2004"),
+  );
 });
