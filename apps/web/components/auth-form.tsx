@@ -13,7 +13,7 @@ export function LoginForm({ superAdmin = false }: { superAdmin?: boolean }) {
   const [mode, setMode] = useState<AuthMode>(superAdmin ? "SUPER_ADMIN" : "HOSPITAL");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [challengeToken, setChallengeToken] = useState("");
+  const [challengePending, setChallengePending] = useState(false);
   const [emailCode, setEmailCode] = useState("");
   const [emailHint, setEmailHint] = useState("");
   const [visible, setVisible] = useState(false);
@@ -30,17 +30,22 @@ export function LoginForm({ superAdmin = false }: { superAdmin?: boolean }) {
         credentials: "same-origin",
         body: JSON.stringify({ email, password, mode }),
       });
-      const result = await response.json().catch(() => null) as { requiresEmailCode?: boolean; challengeToken?: string; emailHint?: string; message?: string | string[] } | null;
+      const result = await response.json().catch(() => null) as { requiresEmailCode?: boolean; emailHint?: string; message?: string | string[] } | null;
       if (!response.ok) {
         const text = Array.isArray(result?.message) ? result.message.join(" ") : result?.message;
         setMessage(text || "We couldn’t start sign-in. Check your details or contact your administrator.");
+        if (response.status === 503) {
+          setChallengePending(false);
+          setEmailCode("");
+          setEmailHint("");
+        }
         return;
       }
-      if (response.status !== 202 || !result?.requiresEmailCode || !result.challengeToken) {
+      if (response.status !== 202 || !result?.requiresEmailCode) {
         setMessage("The sign-in service returned an unexpected response. Please try again.");
         return;
       }
-      setChallengeToken(result.challengeToken);
+      setChallengePending(true);
       setEmailHint(result.emailHint ?? "your verified email address");
       setEmailCode("");
     } catch {
@@ -52,7 +57,7 @@ export function LoginForm({ superAdmin = false }: { superAdmin?: boolean }) {
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!challengeToken) {
+    if (!challengePending) {
       await requestEmailCode();
       return;
     }
@@ -63,7 +68,7 @@ export function LoginForm({ superAdmin = false }: { superAdmin?: boolean }) {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "same-origin",
-        body: JSON.stringify({ email, password, mode, challengeToken, emailCode }),
+        body: JSON.stringify({ email, password, mode, emailCode }),
       });
       if (!response.ok) {
         const result = await response.json().catch(() => null) as { message?: string | string[] } | null;
@@ -113,8 +118,8 @@ export function LoginForm({ superAdmin = false }: { superAdmin?: boolean }) {
         <h2>{superAdmin ? "Administrator sign in" : "Welcome back"}</h2>
         <p className="auth-subtitle">{superAdmin ? "Use your platform administrator account and a one-time code sent to your verified email." : "Sign in with your password and a one-time email verification code."}</p>
         {!superAdmin && <div className="auth-mode" role="group" aria-label="Choose sign-in type">
-          <button type="button" disabled={Boolean(challengeToken)} aria-pressed={mode === "HOSPITAL"} className={mode === "HOSPITAL" ? "selected" : ""} onClick={() => { setMode("HOSPITAL"); setMessage(""); }}><Building2 size={16}/> Hospital login</button>
-          <button type="button" disabled={Boolean(challengeToken)} aria-pressed={mode === "PATIENT"} className={mode === "PATIENT" ? "selected" : ""} onClick={() => { setMode("PATIENT"); setMessage(""); }}><UserRound size={16}/> Patient login</button>
+          <button type="button" disabled={challengePending} aria-pressed={mode === "HOSPITAL"} className={mode === "HOSPITAL" ? "selected" : ""} onClick={() => { setMode("HOSPITAL"); setMessage(""); }}><Building2 size={16}/> Hospital login</button>
+          <button type="button" disabled={challengePending} aria-pressed={mode === "PATIENT"} className={mode === "PATIENT" ? "selected" : ""} onClick={() => { setMode("PATIENT"); setMessage(""); }}><UserRound size={16}/> Patient login</button>
         </div>}
         <form className="auth-form" onSubmit={submit}>
           <label className="auth-label" htmlFor="login-email">Email address</label>
@@ -122,14 +127,14 @@ export function LoginForm({ superAdmin = false }: { superAdmin?: boolean }) {
           <label className="auth-label" htmlFor="login-password">Password</label>
           <div className="auth-input-wrap"><LockKeyhole size={18}/><input id="login-password" name="password" type={visible ? "text" : "password"} autoComplete="current-password" required minLength={12} maxLength={128} value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Enter your password"/><button className="auth-eye" type="button" onClick={() => setVisible((value) => !value)} aria-label={visible ? "Hide password" : "Show password"}>{visible ? <EyeOff size={18}/> : <Eye size={18}/>}</button></div>
           <div className="auth-forgot-row"><Link href="/forgot-password">Forgot password?</Link></div>
-          {challengeToken && <>
+          {challengePending && <>
             <p className="auth-code-notice" role="status">A one-time code was sent to <strong>{emailHint}</strong>. It expires in 10 minutes.</p>
             <label className="auth-label" htmlFor="login-email-code">Email verification code</label>
             <div className="auth-input-wrap"><Mail size={18}/><input id="login-email-code" name="emailCode" type="text" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} required value={emailCode} onChange={(event) => setEmailCode(event.target.value.replace(/\D/g, ""))} placeholder="Enter the 6-digit code" /></div>
-            <div className="auth-code-actions"><button type="button" onClick={() => void requestEmailCode()} disabled={busy}>Resend code</button><button type="button" onClick={() => { setChallengeToken(""); setEmailCode(""); setEmailHint(""); setMessage(""); }}>Use a different account</button></div>
+            <div className="auth-code-actions"><button type="button" onClick={() => void requestEmailCode()} disabled={busy}>Resend code</button><button type="button" onClick={() => { setChallengePending(false); setEmailCode(""); setEmailHint(""); setMessage(""); }}>Use a different account</button></div>
           </>}
           {message && <p className="auth-message" role="alert">{message}</p>}
-          <button className="auth-submit" type="submit" disabled={busy || Boolean(challengeToken && emailCode.length !== 6)}>{busy ? <><LoaderCircle size={18} className="auth-spin"/> {challengeToken ? "Verifying code…" : "Sending code…"}</> : <>{challengeToken ? "Verify code & sign in" : "Send email code"} <ArrowRight size={18}/></>}</button>
+          <button className="auth-submit" type="submit" disabled={busy || Boolean(challengePending && emailCode.length !== 6)}>{busy ? <><LoaderCircle size={18} className="auth-spin"/> {challengePending ? "Verifying code…" : "Sending code…"}</> : <>{challengePending ? "Verify code & sign in" : "Send email code"} <ArrowRight size={18}/></>}</button>
         </form>
         <p className="auth-help">{superAdmin ? "Platform administrator access is invitation-only." : <>Need access? <Link href="/register-hospital">Register a hospital</Link> or contact your administrator.</>}</p>
         <div className="auth-panel-footer"><Link href="/site"><ArrowLeft size={14}/> About JR Xpert HMS</Link><span>Better Care. Smarter Management. Healthier Tomorrow.</span></div>

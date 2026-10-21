@@ -3,16 +3,42 @@ import { ForbiddenException, ServiceUnavailableException, UnauthorizedException 
 import { test } from "node:test";
 import { AuthController } from "../src/auth/auth.controller.mjs";
 import { hashEmailVerificationCode, hashPassword } from "../src/security/security.crypto.mjs";
+import { createLoginChallengeCookie, loginChallengeCookieName, readLoginChallengeToken } from "../src/auth/login-challenge-cookie.mjs";
 
 const request = { headers: { "user-agent": "unit-test" }, ip: "127.0.0.1" };
 const rateLimitDatabase = { $queryRaw: async () => [{ failedAttempts: 1 }] };
 
+function challengeCookiePair(setCookie: string | string[]): string {
+  const values = Array.isArray(setCookie) ? setCookie : [setCookie];
+  const value = values.find((cookie) => cookie.startsWith(`${loginChallengeCookieName()}=`));
+  assert.ok(value, "a login challenge must be set in an HttpOnly cookie");
+  return value.split(";", 1)[0];
+}
+
+function challengeCookieHeader(setCookie: string | string[]): string {
+  const values = Array.isArray(setCookie) ? setCookie : [setCookie];
+  const value = values.find((cookie) => cookie.startsWith(`${loginChallengeCookieName()}=`));
+  assert.ok(value, "a login challenge must be set in an HttpOnly cookie");
+  return value;
+}
+
+test("login challenge cookies are path-scoped, HttpOnly and reject malformed or duplicate tokens", () => {
+  const token = "a".repeat(64);
+  const cookieName = loginChallengeCookieName();
+  const cookie = createLoginChallengeCookie(token, new Date(Date.now() + 10 * 60 * 1000));
+  assert.match(cookie, new RegExp(`^${cookieName}=${token}; HttpOnly; Path=/api/auth/login; SameSite=Strict; Max-Age=(?:59[0-9]|600)`));
+  assert.equal(readLoginChallengeToken(`${cookieName}=${token}`), token);
+  assert.equal(readLoginChallengeToken(`${cookieName}=bad`), null);
+  assert.equal(readLoginChallengeToken(`${cookieName}=${token}; ${cookieName}=${token}`), null);
+});
+
 test("patient login sends a one-time email code and creates a 12-hour session only after code verification", async () => {
   const passwordHash = await hashPassword("correct horse battery 927!");
   let createdSession: Record<string, unknown> | undefined;
-  let cookie = "";
+  let setCookies: string | string[] = "";
   let sentCode = "";
   let storedChallenge: Record<string, unknown> | undefined;
+  let oldChallengesInvalidated = false;
   const membership = {
     id: "member-patient",
     role: "PATIENT",
@@ -50,10 +76,21 @@ test("patient login sends a one-time email code and creates a 12-hour session on
         assert.deepEqual(values, ["user-1"]);
         return [{ id: "user-1" }];
       },
-      loginVerificationCode: { updateMany: async () => {
-        storedChallenge = { ...storedChallenge, usedAt: new Date() };
-        return { count: 1 };
-      } },
+      loginVerificationCode: {
+        updateMany: async ({ where, data }: { where: Record<string, unknown>; data: Record<string, unknown> }) => {
+          if (where.userId && !where.id) {
+            assert.deepEqual(where, { userId: "user-1", mode: "PATIENT", usedAt: null });
+            oldChallengesInvalidated = true;
+            return { count: 1 };
+          }
+          storedChallenge = { ...storedChallenge, ...data };
+          return { count: 1 };
+        },
+        create: async ({ data }: { data: Record<string, unknown> }) => {
+          storedChallenge = { ...data, id: "challenge-1", failedAttempts: 0, usedAt: null };
+          return { id: "challenge-1" };
+        },
+      },
       session: { create: async ({ data }: { data: Record<string, unknown> }) => {
         createdSession = data;
         return { id: "session-1", expiresAt: data.expiresAt };
@@ -70,16 +107,21 @@ test("patient login sends a one-time email code and creates a 12-hour session on
   const firstResponse = await controller.login(
     { email: " PATIENT@example.test ", password: "correct horse battery 927!", mode: "PATIENT" },
     request,
-    { setHeader: (_name, value) => { cookie = value; } },
+    { setHeader: (_name, value) => { setCookies = value; } },
   );
   assert.equal(firstResponse.requiresEmailCode, true);
   assert.equal(firstResponse.emailHint, "p••••••@example.test");
-  assert.equal(cookie, "");
+  assert.equal("challengeToken" in firstResponse, false);
+  assert.equal(oldChallengesInvalidated, true);
+  const challengeCookieValue = challengeCookieHeader(setCookies);
+  assert.match(challengeCookieValue, /^jrxpert_login_challenge=[a-f0-9]{64}; HttpOnly; Path=\/api\/auth\/login; SameSite=Strict; Max-Age=/);
+  const challengeCookie = challengeCookieValue.split(";", 1)[0];
+  assert.equal(readLoginChallengeToken(challengeCookie), challengeCookie.split("=", 2)[1]);
 
   const response = await controller.login(
-    { email: "patient@example.test", password: "correct horse battery 927!", mode: "PATIENT", challengeToken: firstResponse.challengeToken, emailCode: sentCode },
-    request,
-    { setHeader: (_name, value) => { cookie = value; } },
+    { email: "patient@example.test", password: "correct horse battery 927!", mode: "PATIENT", emailCode: sentCode },
+    { ...request, headers: { ...request.headers, cookie: challengeCookie } },
+    { setHeader: (_name, value) => { setCookies = value; } },
   );
 
   assert.equal(response.user.id, "user-1");
@@ -88,16 +130,21 @@ test("patient login sends a one-time email code and creates a 12-hour session on
   assert.ok(storedChallenge?.usedAt);
   assert.equal(createdSession?.activeMembershipId, "member-patient");
   assert.equal(typeof createdSession?.tokenHash, "string");
-  assert.notEqual(createdSession?.tokenHash, cookie.match(/=([a-f0-9]{64})/)?.[1]);
+  const returnedCookies = Array.isArray(setCookies) ? setCookies : [setCookies];
+  const sessionCookie = returnedCookies.find((value) => value.startsWith("jrxpert_session=")) ?? "";
+  const clearedChallengeCookie = returnedCookies.find((value) => value.startsWith("jrxpert_login_challenge=")) ?? "";
+  assert.notEqual(createdSession?.tokenHash, sessionCookie.match(/=([a-f0-9]{64})/)?.[1]);
   const remainingSessionMs = (createdSession?.expiresAt as Date).getTime() - Date.now();
   assert.ok(remainingSessionMs > 11 * 60 * 60 * 1000 && remainingSessionMs <= 12 * 60 * 60 * 1000);
-  assert.match(cookie, /^jrxpert_session=[a-f0-9]{64}; HttpOnly; Path=\/; SameSite=Strict; Max-Age=/);
+  assert.match(sessionCookie, /^jrxpert_session=[a-f0-9]{64}; HttpOnly; Path=\/; SameSite=Strict; Max-Age=/);
+  assert.match(clearedChallengeCookie, /^jrxpert_login_challenge=; HttpOnly; Path=\/api\/auth\/login; SameSite=Strict; Max-Age=0$/);
 });
 
 test("account suspension between email code delivery and login blocks session creation", async () => {
   const passwordHash = await hashPassword("correct horse battery 927!");
   let sentCode = "";
   let challenge: Record<string, unknown> | undefined;
+  let challengeCookie = "";
   let sessionCreated = false;
   let failureAudited = false;
   const prisma = {
@@ -110,16 +157,23 @@ test("account suspension between email code delivery and login blocks session cr
       updateMany: async () => { throw new Error("suspended account must not consume or create a session from this code"); },
     },
     auditEvent: { create: async ({ data }: { data: { action: string } }) => { if (data.action === "auth.login_failed") failureAudited = true; return {}; } },
-    $transaction: async (callback: (transaction: Record<string, unknown>) => Promise<unknown>) => callback({
+    $transaction: async (callback: (transaction: Record<string, any>) => Promise<unknown>) => callback({
       $queryRaw: async (query: TemplateStringsArray) => { assert.match(query.join(""), /FOR UPDATE/); return []; },
-      loginVerificationCode: { updateMany: async () => { throw new Error("a consumed code must not reach this step"); } },
+      loginVerificationCode: {
+        updateMany: async ({ where }: { where: Record<string, unknown> }) => {
+          if (where.userId && !where.id) return { count: 0 };
+          throw new Error("a consumed code must not reach this step");
+        },
+        create: async ({ data }: { data: Record<string, unknown> }) => { challenge = { ...data, id: "challenge-1", failedAttempts: 0, usedAt: null }; return { id: "challenge-1" }; },
+      },
       session: { create: async () => { sessionCreated = true; throw new Error("session must not be created"); } },
       auditEvent: { create: async () => ({}) }, authRateLimit: { deleteMany: async () => ({ count: 0 }) },
     }),
   };
   const controller = new AuthController(prisma as never, { isEmailDeliveryConfigured: () => true, sendLoginVerificationCode: async (_email: string, code: string) => { sentCode = code; } } as never);
-  const firstStep = await controller.login({ email: "staff@example.test", password: "correct horse battery 927!", mode: "HOSPITAL" }, request, { setHeader: () => undefined });
-  await assert.rejects(() => controller.login({ email: "staff@example.test", password: "correct horse battery 927!", mode: "HOSPITAL", challengeToken: firstStep.challengeToken, emailCode: sentCode }, request, { setHeader: () => undefined }), (error: unknown) => error instanceof UnauthorizedException);
+  const firstStep = await controller.login({ email: "staff@example.test", password: "correct horse battery 927!", mode: "HOSPITAL" }, request, { setHeader: (_name, value) => { challengeCookie = challengeCookiePair(value); } });
+  assert.equal("challengeToken" in firstStep, false);
+  await assert.rejects(() => controller.login({ email: "staff@example.test", password: "correct horse battery 927!", mode: "HOSPITAL", emailCode: sentCode }, { ...request, headers: { ...request.headers, cookie: challengeCookie } }, { setHeader: () => undefined }), (error: unknown) => error instanceof UnauthorizedException);
   assert.equal(sessionCreated, false);
   assert.equal(failureAudited, true);
 });
@@ -128,6 +182,7 @@ test("super-admin login uses email verification rather than requiring an authent
   const passwordHash = await hashPassword("correct horse battery 927!");
   let sentCode = "";
   let storedChallenge: Record<string, unknown> | undefined;
+  let challengeCookie = "";
   const membership = { id: "member-admin", role: "SUPER_ADMIN", department: null, organization: { id: "org-1", name: "JR Xpert", slug: "jr-xpert" }, hospital: null, branch: null };
   const prisma = {
     ...rateLimitDatabase,
@@ -144,14 +199,25 @@ test("super-admin login uses email verification rather than requiring an authent
         assert.deepEqual(values, ["admin-1"]);
         return [{ id: "admin-1" }];
       },
-      loginVerificationCode: { updateMany: async () => { storedChallenge = { ...storedChallenge, usedAt: new Date() }; return { count: 1 }; } },
+      loginVerificationCode: {
+        updateMany: async ({ where, data }: { where: Record<string, unknown>; data: Record<string, unknown> }) => {
+          if (where.userId && !where.id) return { count: 0 };
+          storedChallenge = { ...storedChallenge, ...data };
+          return { count: 1 };
+        },
+        create: async ({ data }: { data: Record<string, unknown> }) => { storedChallenge = { ...data, id: "challenge-admin", failedAttempts: 0, usedAt: null }; return { id: "challenge-admin" }; },
+      },
       session: { create: async ({ data }: { data: Record<string, unknown> }) => ({ id: "session-admin", expiresAt: data.expiresAt }) },
       auditEvent: { create: async () => ({}) }, authRateLimit: { deleteMany: async () => ({ count: 1 }) },
     }),
   };
   const controller = new AuthController(prisma as never, { isEmailDeliveryConfigured: () => true, sendLoginVerificationCode: async (_email: string, code: string) => { sentCode = code; } } as never);
-  const challenge = await controller.login({ email: "admin@example.test", password: "correct horse battery 927!", mode: "SUPER_ADMIN" }, request, { setHeader: () => undefined });
-  const result = await controller.login({ email: "admin@example.test", password: "correct horse battery 927!", mode: "SUPER_ADMIN", challengeToken: challenge.challengeToken, emailCode: sentCode }, request, { setHeader: () => undefined });
+  const challenge = await controller.login({ email: "admin@example.test", password: "correct horse battery 927!", mode: "SUPER_ADMIN" }, request, { setHeader: (_name, value) => { challengeCookie = challengeCookiePair(value); } });
+  assert.equal("challengeToken" in challenge, false);
+  assert.equal(challenge.requiresEmailCode, true);
+  assert.ok(readLoginChallengeToken(challengeCookie));
+  assert.equal(storedChallenge?.codeHash, hashEmailVerificationCode(sentCode));
+  const result = await controller.login({ email: "admin@example.test", password: "correct horse battery 927!", mode: "SUPER_ADMIN", emailCode: sentCode }, { ...request, headers: { ...request.headers, cookie: challengeCookie } }, { setHeader: () => undefined });
   assert.equal(challenge.requiresEmailCode, true);
   assert.equal(result.user.id, "admin-1");
   assert.equal(result.memberships[0].role, "SUPER_ADMIN");
@@ -169,15 +235,18 @@ test("login never reports a successful first step when email delivery is not con
     loginVerificationCode: { create: async () => { throw new Error("a code must not be persisted without a sender"); } },
   };
   const controller = new AuthController(prisma as never, { isEmailDeliveryConfigured: () => false } as never);
+  let clearedCookie = "";
   await assert.rejects(() => controller.login(
-    { email: "staff@example.test", password: "correct horse battery 927!", mode: "HOSPITAL" }, request, { setHeader: () => undefined },
+    { email: "staff@example.test", password: "correct horse battery 927!", mode: "HOSPITAL" }, request, { setHeader: (_name, value) => { clearedCookie = Array.isArray(value) ? value.join("; ") : value; } },
   ), (error: unknown) => error instanceof ServiceUnavailableException && error.getStatus() === 503);
+  assert.match(clearedCookie, /^jrxpert_login_challenge=; HttpOnly; Path=\/api\/auth\/login; SameSite=Strict; Max-Age=0$/);
 });
 
 test("an incorrect email code is rate-counted and cannot create a session", async () => {
   const passwordHash = await hashPassword("correct horse battery 927!");
   let sentCode = "";
   let storedChallenge: Record<string, unknown> | undefined;
+  let challengeCookie = "";
   let failedAudit = false;
   let sessionCreated = false;
   const prisma = {
@@ -190,12 +259,21 @@ test("an incorrect email code is rate-counted and cannot create a session", asyn
       updateMany: async () => { storedChallenge = { ...storedChallenge, failedAttempts: 1 }; return { count: 1 }; },
     },
     auditEvent: { create: async () => { failedAudit = true; return {}; } },
-    $transaction: async () => { throw new Error("an invalid code must never create a session"); },
+    $transaction: async (callback: (transaction: Record<string, any>) => Promise<unknown>) => callback({
+      loginVerificationCode: {
+        updateMany: async ({ where }: { where: Record<string, unknown> }) => {
+          if (where.userId) return { count: 0 };
+          throw new Error("an invalid code must never create a session");
+        },
+        create: async ({ data }: { data: Record<string, unknown> }) => { storedChallenge = { ...data, id: "challenge-1", failedAttempts: 0, usedAt: null }; return { id: "challenge-1" }; },
+      },
+    }),
   };
   const controller = new AuthController(prisma as never, { isEmailDeliveryConfigured: () => true, sendLoginVerificationCode: async (_email: string, code: string) => { sentCode = code; } } as never);
-  const challenge = await controller.login({ email: "staff@example.test", password: "correct horse battery 927!", mode: "HOSPITAL" }, request, { setHeader: () => undefined });
+  const challenge = await controller.login({ email: "staff@example.test", password: "correct horse battery 927!", mode: "HOSPITAL" }, request, { setHeader: (_name, value) => { challengeCookie = challengeCookiePair(value); } });
   const invalidCode = sentCode === "999999" ? "999998" : "999999";
-  await assert.rejects(() => controller.login({ email: "staff@example.test", password: "correct horse battery 927!", mode: "HOSPITAL", challengeToken: challenge.challengeToken, emailCode: invalidCode }, request, { setHeader: () => { sessionCreated = true; } }), (error: unknown) => error instanceof UnauthorizedException && error.getStatus() === 401);
+  assert.equal("challengeToken" in challenge, false);
+  await assert.rejects(() => controller.login({ email: "staff@example.test", password: "correct horse battery 927!", mode: "HOSPITAL", emailCode: invalidCode }, { ...request, headers: { ...request.headers, cookie: challengeCookie } }, { setHeader: () => { sessionCreated = true; } }), (error: unknown) => error instanceof UnauthorizedException && error.getStatus() === 401);
   assert.equal(failedAudit, true);
   assert.equal(sessionCreated, false);
   assert.equal(storedChallenge?.failedAttempts, 1);

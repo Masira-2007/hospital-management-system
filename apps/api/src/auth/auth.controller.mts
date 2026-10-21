@@ -36,6 +36,7 @@ import { EmailDeliveryService } from "./email-delivery.service.mjs";
 import { getHeader, type RequestLike, type ResponseLike } from "./auth.types.mjs";
 import { SessionAuthGuard, sessionCookieName } from "./session-auth.guard.mjs";
 import { consumeFixedWindowLimit } from "../security/rate-limit.mjs";
+import { clearLoginChallengeCookie, createLoginChallengeCookie, readLoginChallengeToken } from "./login-challenge-cookie.mjs";
 
 const SESSION_DURATION_MS = 12 * 60 * 60 * 1000;
 const PASSWORD_RESET_DURATION_MS = 20 * 60 * 1000;
@@ -62,7 +63,6 @@ export class AuthController {
   async login(@Body() body: LoginDto, @Req() request: RequestLike, @Res({ passthrough: true }) response: ResponseLike) {
     const email = body.email.trim().toLowerCase();
     const mode = body.mode ?? "HOSPITAL";
-    if (Boolean(body.challengeToken) !== Boolean(body.emailCode)) throw authenticationFailure();
     const keys = this.getRateKeys(email, request.ip ?? "unknown");
     await this.consumeLoginAttempt(keys);
 
@@ -103,8 +103,9 @@ export class AuthController {
       throw authenticationFailure();
     }
 
-    if (!body.challengeToken || !body.emailCode) {
+    if (!body.emailCode) {
       if (!this.emailDelivery.isEmailDeliveryConfigured()) {
+        response.setHeader("Set-Cookie", clearLoginChallengeCookie());
         throw new ServiceUnavailableException({
           code: "LOGIN_EMAIL_NOT_CONFIGURED",
           message: "Email verification is not configured. Contact the system administrator.",
@@ -112,15 +113,22 @@ export class AuthController {
       }
       const challengeToken = createSessionToken();
       const code = createEmailVerificationCode();
-      const challenge = await this.prisma.loginVerificationCode.create({
-        data: {
-          userId: user.id,
-          tokenHash: hashSessionToken(challengeToken),
-          codeHash: hashEmailVerificationCode(code),
-          mode,
-          expiresAt: new Date(Date.now() + LOGIN_CODE_DURATION_MS),
-        },
-        select: { id: true },
+      const expiresAt = new Date(Date.now() + LOGIN_CODE_DURATION_MS);
+      const challenge = await this.prisma.$transaction(async (transaction) => {
+        await transaction.loginVerificationCode.updateMany({
+          where: { userId: user.id, mode, usedAt: null },
+          data: { usedAt: now },
+        });
+        return transaction.loginVerificationCode.create({
+          data: {
+            userId: user.id,
+            tokenHash: hashSessionToken(challengeToken),
+            codeHash: hashEmailVerificationCode(code),
+            mode,
+            expiresAt,
+          },
+          select: { id: true },
+        });
       });
       try {
         await this.emailDelivery.sendLoginVerificationCode(user.email, code);
@@ -131,22 +139,28 @@ export class AuthController {
             data: { actorUserId: user.id, action: "auth.login_code_delivery_failed", resourceType: "login_verification", resourceId: challenge.id, metadata: { loginMode: mode } as Prisma.InputJsonObject },
           }),
         ]);
+        response.setHeader("Set-Cookie", clearLoginChallengeCookie());
         throw new ServiceUnavailableException("Email verification could not be sent. Try again later.");
       }
       await this.prisma.auditEvent.create({
         data: { actorUserId: user.id, action: "auth.login_code_sent", resourceType: "login_verification", resourceId: challenge.id, metadata: { loginMode: mode } as Prisma.InputJsonObject },
       });
+      response.setHeader("Set-Cookie", createLoginChallengeCookie(challengeToken, expiresAt));
       response.statusCode = 202;
       return {
         requiresEmailCode: true,
-        challengeToken,
         emailHint: maskEmail(user.email),
         expiresInSeconds: LOGIN_CODE_DURATION_MS / 1000,
       };
     }
 
+    const challengeToken = readLoginChallengeToken(getHeader(request, "cookie"));
+    if (!challengeToken) {
+      await this.recordAuthenticationFailure(keys, user.id);
+      throw authenticationFailure();
+    }
     const challenge = await this.prisma.loginVerificationCode.findUnique({
-      where: { tokenHash: hashSessionToken(body.challengeToken) },
+      where: { tokenHash: hashSessionToken(challengeToken) },
       select: { id: true, userId: true, codeHash: true, mode: true, failedAttempts: true, expiresAt: true, usedAt: true },
     });
     if (!challenge || challenge.userId !== user.id || challenge.mode !== mode || challenge.usedAt || challenge.expiresAt <= now || challenge.failedAttempts >= MAX_LOGIN_CODE_ATTEMPTS) {
@@ -210,7 +224,7 @@ export class AuthController {
       throw authenticationFailure();
     }
 
-    response.setHeader("Set-Cookie", this.createSessionCookie(rawToken, expiresAt));
+    response.setHeader("Set-Cookie", [this.createSessionCookie(rawToken, expiresAt), clearLoginChallengeCookie()]);
     return {
       user: { id: user.id, email: user.email, displayName: user.displayName },
       memberships: allowedMemberships.map((membership) => ({

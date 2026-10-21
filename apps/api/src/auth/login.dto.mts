@@ -15,10 +15,6 @@ export class LoginDto {
   mode?: "HOSPITAL" | "PATIENT" | "SUPER_ADMIN";
 
   @IsOptional()
-  @Matches(/^[a-f0-9]{64}$/i)
-  challengeToken?: string;
-
-  @IsOptional()
   @Matches(/^\d{6}$/)
   emailCode?: string;
 }

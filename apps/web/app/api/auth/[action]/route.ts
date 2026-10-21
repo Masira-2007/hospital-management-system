@@ -3,6 +3,7 @@ import { configuredApiBase } from "@/lib/api-base";
 
 const actions = new Set(["login", "logout", "me", "forgot-password", "reset-password", "select-membership"]);
 const sessionCookie = process.env.NODE_ENV === "production" ? "__Host-jrxpert_session" : "jrxpert_session";
+const challengeCookie = process.env.NODE_ENV === "production" ? "__Secure-jrxpert_login_challenge" : "jrxpert_login_challenge";
 export const runtime = "nodejs";
 
 function jsonError(status: number, code: string, message: string) {
@@ -12,10 +13,16 @@ function jsonError(status: number, code: string, message: string) {
   });
 }
 
-function safeCookie(request: NextRequest): string | null {
-  const values = request.cookies.getAll(sessionCookie);
-  if (values.length !== 1 || !/^[a-f0-9]{64}$/i.test(values[0].value)) return null;
-  return `${sessionCookie}=${values[0].value}`;
+function safeAuthCookies(request: NextRequest): string | null {
+  const pairs: string[] = [];
+  const rawCookieHeader = request.headers.get("cookie") ?? "";
+  for (const name of [sessionCookie, challengeCookie]) {
+    const matches = rawCookieHeader.split(";").map((part) => part.trim()).filter((part) => part.slice(0, part.indexOf("=")).trim() === name);
+    if (matches.length !== 1) continue;
+    const value = matches[0].slice(name.length + 1);
+    if (/^[a-f0-9]{64}$/i.test(value)) pairs.push(`${name}=${value}`);
+  }
+  return pairs.length ? pairs.join("; ") : null;
 }
 
 async function proxy(request: NextRequest, action: string, method: "GET" | "POST") {
@@ -56,7 +63,7 @@ async function proxy(request: NextRequest, action: string, method: "GET" | "POST
 
   const path = action === "me" ? "auth/me" : `auth/${action}`;
   const target = new URL(path, `${base.toString().replace(/\/$/, "")}/`);
-  const requestCookie = safeCookie(request);
+  const requestCookie = safeAuthCookies(request);
   try {
     const response = await fetch(target, {
       method,
@@ -90,8 +97,10 @@ async function proxy(request: NextRequest, action: string, method: "GET" | "POST
       return jsonError(502, "UPSTREAM_ERROR", "The service returned an invalid response.");
     }
     const headers = new Headers({ "Cache-Control": "no-store", "Pragma": "no-cache" });
-    const setCookie = response.headers.get("set-cookie");
-    if (setCookie) headers.append("Set-Cookie", setCookie);
+    const setCookies = typeof response.headers.getSetCookie === "function"
+      ? response.headers.getSetCookie()
+      : [response.headers.get("set-cookie")].filter((value): value is string => Boolean(value));
+    for (const setCookie of setCookies) headers.append("Set-Cookie", setCookie);
     if (responseBody !== null) headers.set("Content-Type", "application/json; charset=utf-8");
     return new NextResponse(responseBody === null ? null : JSON.stringify(responseBody), {
       status: response.status,

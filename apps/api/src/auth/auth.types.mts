@@ -20,7 +20,7 @@ export interface RequestLike {
 }
 
 export interface ResponseLike {
-  setHeader(name: string, value: string): void;
+  setHeader(name: string, value: string | string[]): void;
   statusCode?: number;
 }
 
