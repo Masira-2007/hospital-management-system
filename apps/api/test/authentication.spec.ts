@@ -69,7 +69,7 @@ test("patient login sends a one-time email code and creates a 12-hour session on
         return { count: 1 };
       },
     },
-    auditEvent: { create: async () => ({}) },
+    auditEvent: { createMany: async () => ({}) },
     $transaction: async (callback: (transaction: Record<string, unknown>) => Promise<unknown>) => callback({
       $queryRaw: async (query: TemplateStringsArray, ...values: unknown[]) => {
         assert.match(query.join(""), /FOR UPDATE/);
@@ -95,7 +95,7 @@ test("patient login sends a one-time email code and creates a 12-hour session on
         createdSession = data;
         return { id: "session-1", expiresAt: data.expiresAt };
       } },
-      auditEvent: { create: async () => ({}) },
+      auditEvent: { createMany: async () => ({}) },
       authRateLimit: { deleteMany: async () => ({ count: 1 }) },
     }),
   };
@@ -156,7 +156,7 @@ test("account suspension between email code delivery and login blocks session cr
       findUnique: async () => challenge,
       updateMany: async () => { throw new Error("suspended account must not consume or create a session from this code"); },
     },
-    auditEvent: { create: async ({ data }: { data: { action: string } }) => { if (data.action === "auth.login_failed") failureAudited = true; return {}; } },
+    auditEvent: { createMany: async ({ data }: { data: { action: string } }) => { if (data.action === "auth.login_failed") failureAudited = true; return { count: 1 }; } },
     $transaction: async (callback: (transaction: Record<string, any>) => Promise<unknown>) => callback({
       $queryRaw: async (query: TemplateStringsArray) => { assert.match(query.join(""), /FOR UPDATE/); return []; },
       loginVerificationCode: {
@@ -167,7 +167,7 @@ test("account suspension between email code delivery and login blocks session cr
         create: async ({ data }: { data: Record<string, unknown> }) => { challenge = { ...data, id: "challenge-1", failedAttempts: 0, usedAt: null }; return { id: "challenge-1" }; },
       },
       session: { create: async () => { sessionCreated = true; throw new Error("session must not be created"); } },
-      auditEvent: { create: async () => ({}) }, authRateLimit: { deleteMany: async () => ({ count: 0 }) },
+      auditEvent: { createMany: async () => ({}) }, authRateLimit: { deleteMany: async () => ({ count: 0 }) },
     }),
   };
   const controller = new AuthController(prisma as never, { isEmailDeliveryConfigured: () => true, sendLoginVerificationCode: async (_email: string, code: string) => { sentCode = code; } } as never);
@@ -192,7 +192,7 @@ test("super-admin login uses email verification rather than requiring an authent
       create: async ({ data }: { data: Record<string, unknown> }) => { storedChallenge = { ...data, id: "challenge-admin", failedAttempts: 0, usedAt: null }; return { id: "challenge-admin" }; },
       findUnique: async () => storedChallenge,
     },
-    auditEvent: { create: async () => ({}) },
+    auditEvent: { createMany: async () => ({}) },
     $transaction: async (callback: (transaction: Record<string, any>) => Promise<unknown>) => callback({
       $queryRaw: async (query: TemplateStringsArray, ...values: unknown[]) => {
         assert.match(query.join(""), /FOR UPDATE/);
@@ -208,7 +208,7 @@ test("super-admin login uses email verification rather than requiring an authent
         create: async ({ data }: { data: Record<string, unknown> }) => { storedChallenge = { ...data, id: "challenge-admin", failedAttempts: 0, usedAt: null }; return { id: "challenge-admin" }; },
       },
       session: { create: async ({ data }: { data: Record<string, unknown> }) => ({ id: "session-admin", expiresAt: data.expiresAt }) },
-      auditEvent: { create: async () => ({}) }, authRateLimit: { deleteMany: async () => ({ count: 1 }) },
+      auditEvent: { createMany: async () => ({}) }, authRateLimit: { deleteMany: async () => ({ count: 1 }) },
     }),
   };
   const controller = new AuthController(prisma as never, { isEmailDeliveryConfigured: () => true, sendLoginVerificationCode: async (_email: string, code: string) => { sentCode = code; } } as never);
@@ -258,7 +258,7 @@ test("an incorrect email code is rate-counted and cannot create a session", asyn
       findUnique: async () => storedChallenge,
       updateMany: async () => { storedChallenge = { ...storedChallenge, failedAttempts: 1 }; return { count: 1 }; },
     },
-    auditEvent: { create: async () => { failedAudit = true; return {}; } },
+    auditEvent: { createMany: async () => { failedAudit = true; return { count: 1 }; } },
     $transaction: async (callback: (transaction: Record<string, any>) => Promise<unknown>) => callback({
       loginVerificationCode: {
         updateMany: async ({ where }: { where: Record<string, unknown> }) => {
@@ -293,7 +293,7 @@ test("password login rejects a patient account in hospital mode with a generic e
       passwordHash, mfaEnabled: false, mfaSecretEncrypted: null, mfaLastUsedCounter: null,
       memberships: [{ id: "member", role: "PATIENT" }],
     }) },
-    auditEvent: { create: async () => { failedAudit = true; return {}; } },
+    auditEvent: { createMany: async () => { failedAudit = true; return { count: 1 }; } },
   };
   const controller = new AuthController(prisma as never, { isConfigured: () => false } as never);
   await assert.rejects(() => controller.login(
@@ -324,7 +324,7 @@ test("hospital portal does not issue a login code to a platform-only administrat
       passwordHash, mfaEnabled: false, mfaSecretEncrypted: null, mfaLastUsedCounter: null,
       memberships: [{ id: "platform-membership", role: "SUPER_ADMIN", hospital: null, branch: null }],
     }) },
-    auditEvent: { create: async () => { failedAudit = true; return {}; } },
+    auditEvent: { createMany: async () => { failedAudit = true; return { count: 1 }; } },
   };
   const controller = new AuthController(prisma as never, {
     isEmailDeliveryConfigured: () => true,
@@ -372,7 +372,7 @@ test("password reset consumes a one-use token and safely rejects reuse", async (
       },
       user: { update: async () => { passwordUpdated = true; return {}; } },
       session: { updateMany: async () => { sessionsRevoked = true; return { count: 2 }; } },
-      auditEvent: { create: async () => ({}) },
+      auditEvent: { createMany: async () => ({}) },
     }),
   };
   const controller = new AuthController(prisma as never, { isConfigured: () => false } as never);
@@ -444,7 +444,7 @@ test("membership selection is verified for the signed-in user, persisted per ses
     $transaction: async (callback: (transaction: Record<string, any>) => Promise<unknown>) => callback({
       membership: { findFirst: async ({ where }: { where: Record<string, any> }) => { membershipQuery = where; return { id: "member-1", organizationId: "org-1" }; } },
       session: { updateMany: async (args: Record<string, any>) => { sessionUpdate = args; return { count: 1 }; } },
-      auditEvent: { create: async ({ data }: { data: Record<string, any> }) => { audit = data; return {}; } },
+      auditEvent: { createMany: async ({ data }: { data: Record<string, any> }) => { audit = data; return {}; } },
     }),
   } as never, {} as never);
   const result = await controller.selectMembership({ membershipId: "member-1" }, {
@@ -477,7 +477,7 @@ test("membership selection rejects a membership owned by a different account", a
     $transaction: async (callback: (transaction: Record<string, any>) => Promise<unknown>) => callback({
       membership: { findFirst: async () => null },
       session: { updateMany: async () => { updated = true; return { count: 1 }; } },
-      auditEvent: { create: async () => ({}) },
+      auditEvent: { createMany: async () => ({}) },
     }),
   } as never, {} as never);
   await assert.rejects(() => controller.selectMembership({ membershipId: "foreign-member" }, {
@@ -496,7 +496,7 @@ test("session revocation is constrained to the authenticated account and audited
       transactions += 1;
       return callback({
         session: { updateMany: async (args: Record<string, any>) => { update = args; return { count: 1 }; } },
-        auditEvent: { create: async ({ data }: { data: Record<string, any> }) => { auditEvents.push(data); return {}; } },
+        auditEvent: { createMany: async ({ data }: { data: Record<string, any> }) => { auditEvents.push(data); return {}; } },
       });
     },
   } as never, {} as never);
@@ -520,7 +520,7 @@ test("session revocation aborts when its audit event cannot be persisted", async
       let pendingRevocation: Date | null = null;
       const result = await callback({
         session: { updateMany: async ({ data }: { data: { revokedAt: Date } }) => { pendingRevocation = data.revokedAt; return { count: 1 }; } },
-        auditEvent: { create: async () => { throw new Error("audit storage unavailable"); } },
+        auditEvent: { createMany: async () => { throw new Error("audit storage unavailable"); } },
       });
       persistedRevocation = pendingRevocation;
       return result;
@@ -543,7 +543,7 @@ test("revoke-other-sessions preserves the current session", async () => {
       transactions += 1;
       return callback({
         session: { updateMany: async (args: Record<string, any>) => { update = args; return { count: 2 }; } },
-        auditEvent: { create: async ({ data }: { data: Record<string, any> }) => { auditEvents.push(data); return {}; } },
+        auditEvent: { createMany: async ({ data }: { data: Record<string, any> }) => { auditEvents.push(data); return {}; } },
       });
     },
   } as never, {} as never);

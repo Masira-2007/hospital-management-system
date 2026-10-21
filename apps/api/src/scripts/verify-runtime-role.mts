@@ -21,6 +21,7 @@ try {
     accessGrantRlsEnabled: boolean | null;
     accessGrantRlsForced: boolean | null;
     accessGrantSelect: boolean;
+    auditEventInsert: boolean;
     patientGrantPolicy: boolean;
     ownActiveGrantPolicy: boolean;
   }>(`
@@ -46,6 +47,7 @@ try {
       (SELECT relrowsecurity FROM pg_class WHERE oid = to_regclass('public."PatientAccessGrant"')) AS "accessGrantRlsEnabled",
       (SELECT relforcerowsecurity FROM pg_class WHERE oid = to_regclass('public."PatientAccessGrant"')) AS "accessGrantRlsForced",
       has_table_privilege('jr_xpert_app', 'public."PatientAccessGrant"', 'SELECT') AS "accessGrantSelect",
+      has_table_privilege('jr_xpert_app', 'public."AuditEvent"', 'INSERT') AS "auditEventInsert",
       EXISTS (
         SELECT 1 FROM pg_policies
         WHERE schemaname = 'public' AND tablename = 'Patient'
@@ -70,6 +72,7 @@ try {
     && state.accessGrantRlsEnabled === true
     && state.accessGrantRlsForced === true
     && state.accessGrantSelect === true
+    && state.auditEventInsert === true
     && state.patientGrantPolicy === true
     && state.ownActiveGrantPolicy === true;
   if (!valid) process.exitCode = 1;

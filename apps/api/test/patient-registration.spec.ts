@@ -31,7 +31,7 @@ test("patient registration derives all tenant fields from verified context and m
     $transaction: async (callback: (transaction: Record<string, unknown>) => Promise<unknown>) => callback({
       $queryRaw: async () => { contextApplied = true; return []; },
       patient: { create: async ({ data }: { data: Record<string, unknown> }) => { insert = data; return saved; } },
-      auditEvent: { create: async ({ data }: { data: Record<string, unknown> }) => { audit = data; } },
+      auditEvent: { createMany: async ({ data }: { data: Record<string, unknown> }) => { audit = data; } },
     }),
   } as unknown as PrismaService);
   const body = {
@@ -96,7 +96,7 @@ test("patient MRN collision retries with a new opaque identifier", async () => {
         if (attempt === 1) throw { code: "P2002" };
         return saved;
       } },
-      auditEvent: { create: async () => undefined },
+      auditEvent: { createMany: async () => undefined },
     }),
   } as unknown as PrismaService);
 

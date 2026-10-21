@@ -25,7 +25,7 @@ test("patient directory applies organization, hospital and branch filters and re
         findMany: async (query: Record<string, unknown>) => { listQuery = query; return [patient]; },
         count: async () => 1,
       },
-      auditEvent: { create: async ({ data }: { data: Record<string, unknown> }) => { auditData = data; } },
+      auditEvent: { createMany: async ({ data }: { data: Record<string, unknown> }) => { auditData = data; } },
     }),
     patient: {
       findMany: async (query: Record<string, unknown>) => {
@@ -115,7 +115,7 @@ test("patient self-service returns only explicitly granted records in the select
           return [{ relationship: "SELF", patient }];
         },
       },
-      auditEvent: { create: async ({ data }: { data: Record<string, unknown> }) => { auditData = data; } },
+      auditEvent: { createMany: async ({ data }: { data: Record<string, unknown> }) => { auditData = data; } },
     }),
   } as unknown as PrismaService;
   const controller = new PatientsController(prisma);

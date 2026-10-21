@@ -132,7 +132,7 @@ export class PlatformController {
           },
         }),
       ]);
-      await transaction.auditEvent.create({
+      await transaction.auditEvent.createMany({
         data: {
           actorUserId: request.authSession!.user.id,
           action: "platform.staff_accounts_listed",
@@ -184,7 +184,7 @@ export class PlatformController {
       if (body.action === "SUSPEND") {
         await transaction.loginVerificationCode.updateMany({ where: { userId: current.id, usedAt: null }, data: { usedAt: now } });
       }
-      await transaction.auditEvent.create({
+      await transaction.auditEvent.createMany({
         data: {
           actorUserId,
           action: body.action === "SUSPEND" ? "platform.staff_account_suspended" : "platform.staff_account_reactivated",
@@ -273,7 +273,7 @@ export class PlatformController {
           },
         }),
       ]);
-      await transaction.auditEvent.create({
+      await transaction.auditEvent.createMany({
         data: {
           actorUserId: request.authSession!.user.id,
           action: "platform.audit_events_listed",
@@ -319,7 +319,7 @@ export class PlatformController {
         data: { status: targetStatus },
       });
       if (changed.count !== 1) throw new ConflictException("Hospital status changed concurrently. Refresh and try again.");
-      await transaction.auditEvent.create({
+      await transaction.auditEvent.createMany({
         data: {
           actorUserId: request.authSession!.user.id,
           organizationId: current.organizationId,
@@ -379,7 +379,7 @@ export class PlatformController {
         data: { status, reviewedAt: now, reviewedByUserId: request.authSession!.user.id, reviewReason: reason },
         select: { id: true, hospitalName: true, officialEmail: true, status: true },
       });
-      await transaction.auditEvent.create({
+      await transaction.auditEvent.createMany({
         data: {
           actorUserId: request.authSession!.user.id,
           action: status === "REJECTED" ? "hospital.application_rejected" : "hospital.application_information_requested",
@@ -396,7 +396,7 @@ export class PlatformController {
       await this.emailDelivery.sendApplicationDecision(application.officialEmail, status, reason);
     } catch {
       notification = "FAILED";
-      await this.prisma.auditEvent.create({
+      await this.prisma.auditEvent.createMany({
         data: { actorUserId: request.authSession!.user.id, action: "hospital.application_notification_failed", resourceType: "hospital_application", resourceId: application.id, metadata: { status } as Prisma.InputJsonObject },
       });
     }
@@ -416,7 +416,7 @@ export class PlatformController {
         data: { status: "PENDING", tokenHash: hashSessionToken(token), expiresAt, deliveryStatus: "PENDING", preparedAt: null, preparedUserId: null, revokedAt: null },
       });
       if (current.count !== 1) throw new ConflictException("This invitation changed. Refresh and try again.");
-      await transaction.auditEvent.create({
+      await transaction.auditEvent.createMany({
         data: { actorUserId: request.authSession!.user.id, organizationId: invitation.organizationId, action: invitation.status === "REVOKED" ? "hospital.invitation_reissued" : "hospital.invitation_resent", resourceType: "hospital_invitation", resourceId: invitation.id },
       });
       return transaction.hospitalInvitation.findUniqueOrThrow({ where: { id: invitation.id }, select: { id: true, intendedEmail: true, organizationId: true, status: true, expiresAt: true } });
@@ -436,7 +436,7 @@ export class PlatformController {
       if (invitation.preparedUserId) {
         await transaction.membership.updateMany({ where: { userId: invitation.preparedUserId, organizationId: invitation.organizationId, hospitalId: invitation.hospitalId, role: "HOSPITAL_ADMIN", status: "INVITED" }, data: { status: "DISABLED" } });
       }
-      await transaction.auditEvent.create({ data: { actorUserId: request.authSession!.user.id, organizationId: invitation.organizationId, action: "hospital.invitation_revoked", resourceType: "hospital_invitation", resourceId: invitation.id } });
+      await transaction.auditEvent.createMany({ data: { actorUserId: request.authSession!.user.id, organizationId: invitation.organizationId, action: "hospital.invitation_revoked", resourceType: "hospital_invitation", resourceId: invitation.id } });
     });
     return { invitation: { id: invitation.id, status: "REVOKED", revokedAt: now.toISOString() } };
   }
@@ -488,7 +488,7 @@ export class PlatformController {
         where: { id: application.id },
         data: { status: "APPROVED", reviewedAt: now, reviewedByUserId: reviewerId, reviewReason: null, createdHospitalId: hospital.id },
       });
-      await transaction.auditEvent.create({
+      await transaction.auditEvent.createMany({
         data: {
           actorUserId: reviewerId,
           action: "hospital.application_approved",
@@ -513,7 +513,7 @@ export class PlatformController {
     }
     await this.prisma.$transaction([
       this.prisma.hospitalInvitation.update({ where: { id: invitation.id }, data: { deliveryStatus } }),
-      this.prisma.auditEvent.create({
+      this.prisma.auditEvent.createMany({
         data: { actorUserId, organizationId: invitation.organizationId, action: deliveryStatus === "SENT" ? "hospital.invitation_email_sent" : "hospital.invitation_email_failed", resourceType: "hospital_invitation", resourceId: invitation.id, metadata: { deliveryStatus } as Prisma.InputJsonObject },
       }),
     ]);

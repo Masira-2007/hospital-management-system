@@ -135,14 +135,14 @@ export class AuthController {
       } catch {
         await this.prisma.$transaction([
           this.prisma.loginVerificationCode.updateMany({ where: { id: challenge.id, usedAt: null }, data: { usedAt: new Date() } }),
-          this.prisma.auditEvent.create({
+          this.prisma.auditEvent.createMany({
             data: { actorUserId: user.id, action: "auth.login_code_delivery_failed", resourceType: "login_verification", resourceId: challenge.id, metadata: { loginMode: mode } as Prisma.InputJsonObject },
           }),
         ]);
         response.setHeader("Set-Cookie", clearLoginChallengeCookie());
         throw new ServiceUnavailableException("Email verification could not be sent. Try again later.");
       }
-      await this.prisma.auditEvent.create({
+      await this.prisma.auditEvent.createMany({
         data: { actorUserId: user.id, action: "auth.login_code_sent", resourceType: "login_verification", resourceId: challenge.id, metadata: { loginMode: mode } as Prisma.InputJsonObject },
       });
       response.setHeader("Set-Cookie", createLoginChallengeCookie(challengeToken, expiresAt));
@@ -207,7 +207,7 @@ export class AuthController {
           activeMembershipId: mode !== "SUPER_ADMIN" && allowedMemberships.length === 1 ? allowedMemberships[0].id : null,
         },
       });
-      await transaction.auditEvent.create({
+      await transaction.auditEvent.createMany({
         data: {
           actorUserId: user.id,
           action: "auth.login_succeeded",
@@ -270,7 +270,7 @@ export class AuthController {
         await transaction.passwordResetToken.create({
           data: { userId: user.id, tokenHash, expiresAt: new Date(now.getTime() + PASSWORD_RESET_DURATION_MS) },
         });
-        await transaction.auditEvent.create({
+        await transaction.auditEvent.createMany({
           data: {
             actorUserId: user.id,
             action: "auth.password_reset_requested",
@@ -285,7 +285,7 @@ export class AuthController {
       } catch {
         await this.prisma.$transaction([
           this.prisma.passwordResetToken.updateMany({ where: { tokenHash, usedAt: null }, data: { usedAt: new Date() } }),
-          this.prisma.auditEvent.create({
+          this.prisma.auditEvent.createMany({
             data: {
               actorUserId: user.id,
               action: "auth.password_reset_delivery_failed",
@@ -336,7 +336,7 @@ export class AuthController {
           where: { userId: reset.user.id, usedAt: null },
           data: { usedAt: now },
         });
-        await transaction.auditEvent.create({
+        await transaction.auditEvent.createMany({
           data: {
             actorUserId: reset.user.id,
             action: "auth.password_reset_completed",
@@ -413,7 +413,7 @@ export class AuthController {
       });
       if (updated.count !== 1) throw new UnauthorizedException("Authentication required.");
 
-      await transaction.auditEvent.create({
+      await transaction.auditEvent.createMany({
         data: {
           organizationId: membership.organizationId,
           actorUserId: userId,
@@ -470,7 +470,7 @@ export class AuthController {
       }
       await transaction.user.update({ where: { id: userId }, data: { passwordHash: newHash } });
       await transaction.session.updateMany({ where: { userId, revokedAt: null }, data: { revokedAt: new Date() } });
-      await transaction.auditEvent.create({
+      await transaction.auditEvent.createMany({
         data: { actorUserId: userId, action: "auth.password_changed", resourceType: "user", resourceId: userId },
       });
     });
@@ -490,7 +490,7 @@ export class AuthController {
         where: { id: sessionId, userId, revokedAt: null },
         data: { revokedAt: new Date() },
       }),
-      this.prisma.auditEvent.create({
+      this.prisma.auditEvent.createMany({
         data: { actorUserId: userId, action: "auth.logout", resourceType: "session", resourceId: sessionId },
       }),
     ]);
@@ -524,7 +524,7 @@ export class AuthController {
         data: { revokedAt: new Date() },
       });
       if (result.count) {
-        await transaction.auditEvent.create({
+        await transaction.auditEvent.createMany({
           data: { actorUserId: userId, action: "auth.session_revoked", resourceType: "session", resourceId: sessionId },
         });
       }
@@ -543,7 +543,7 @@ export class AuthController {
         where: { userId, id: { not: request.authSession!.id }, revokedAt: null },
         data: { revokedAt: new Date() },
       });
-      await transaction.auditEvent.create({
+      await transaction.auditEvent.createMany({
         data: {
           actorUserId: userId,
           action: "auth.other_sessions_revoked",
@@ -564,7 +564,10 @@ export class AuthController {
   }
 
   private async recordAuthenticationFailure(keys: string[], userId?: string) {
-    await this.prisma.auditEvent.create({
+    // create() issues INSERT ... RETURNING on PostgreSQL, which also requires
+    // SELECT. The runtime role is intentionally append-only, so use createMany
+    // and keep the audit write within its minimum INSERT-only grant.
+    await this.prisma.auditEvent.createMany({
       data: {
         actorUserId: userId,
         action: "auth.login_failed",

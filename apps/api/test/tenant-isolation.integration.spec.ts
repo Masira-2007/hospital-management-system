@@ -176,6 +176,8 @@ test("two synthetic hospitals cannot read or modify each other's patient or appo
     assert.equal(appState.rows[0].role, "jr_xpert_app");
     assert.equal(appState.rows[0].superuser, false);
     assert.equal(appState.rows[0].bypassrls, false);
+    const auditInsert = await app.query(`SELECT has_table_privilege(current_user, 'public."AuditEvent"', 'INSERT') AS allowed`);
+    assert.equal(auditInsert.rows[0].allowed, true, "The restricted runtime role must be able to append security audit events.");
 
     fixtureIds = await createFixtures(owner);
     const [organizationA, organizationB] = fixtureIds.organizations;
@@ -194,10 +196,18 @@ test("two synthetic hospitals cannot read or modify each other's patient or appo
     });
 
     await withTenant(app, { userId: staffA, organizationId: organizationA, hospitalId: hospitalA }, async (client) => {
+      const auditEvent = await client.query(
+        `INSERT INTO "AuditEvent" ("id", "organizationId", "actorUserId", "action", "resourceType")
+         VALUES ($1, $2, $3, 'auth.login_failure', 'authentication')`,
+        [`ti_audit_${randomUUID()}`, organizationA, staffA],
+      );
+      assert.equal(auditEvent.rowCount, 1, "Authorized runtime role can append a security event without patient data.");
       const patientRows = await client.query(`SELECT "id" FROM "Patient" WHERE "id" = ANY($1::text[])`, [[patientA, patientB]]);
       assert.deepEqual(patientRows.rows.map(({ id }) => id), [patientA]);
       const appointmentRows = await client.query(`SELECT "id" FROM "Appointment" WHERE "id" = ANY($1::text[])`, [[appointmentA, appointmentB]]);
       assert.deepEqual(appointmentRows.rows.map(({ id }) => id), [appointmentA]);
+      const cancelled = await client.query(`UPDATE "Appointment" SET "status" = 'CANCELLED' WHERE "id" = $1 RETURNING "status"`, [appointmentA]);
+      assert.deepEqual(cancelled.rows.map(({ status }) => status), ["CANCELLED"], "authorized membership can perform the permitted cancellation transition");
     });
 
     await withTenant(app, { userId: staffA, organizationId: organizationB, hospitalId: hospitalB }, async (client) => {
@@ -218,6 +228,7 @@ test("two synthetic hospitals cannot read or modify each other's patient or appo
       await expectDenied(client, () => client.query(`UPDATE "Patient" SET "firstName" = 'Modified' WHERE "id" = $1`, [patientB]));
       await expectDenied(client, () => client.query(`DELETE FROM "Patient" WHERE "id" = $1`, [patientB]));
       await expectDenied(client, () => client.query(`UPDATE "Appointment" SET "status" = 'COMPLETED' WHERE "id" = $1`, [appointmentB]));
+      await expectDenied(client, () => client.query(`UPDATE "Appointment" SET "status" = 'CANCELLED' WHERE "id" = $1`, [appointmentB]));
     });
   } finally {
     try {

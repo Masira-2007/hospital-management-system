@@ -2,6 +2,7 @@ import { Type } from "class-transformer";
 import { IsDateString, IsIn, IsInt, IsOptional, IsString, Matches, Max, MaxLength, Min } from "class-validator";
 
 const APPOINTMENT_STATUSES = ["REQUESTED", "CONFIRMED", "CHECKED_IN", "IN_PROGRESS", "COMPLETED", "CANCELLED", "NO_SHOW"] as const;
+export const APPOINTMENT_CANCELLATION_REASONS = ["PATIENT_REQUESTED", "CLINICIAN_UNAVAILABLE", "SCHEDULING_ERROR", "OTHER"] as const;
 
 export class AppointmentListDto {
   @IsOptional() @IsDateString()
@@ -32,4 +33,9 @@ export class CreateAppointmentDto {
 
   @IsOptional() @Type(() => Number) @IsInt() @Min(10) @Max(240)
   durationMinutes = 20;
+}
+
+export class CancelAppointmentDto {
+  @IsIn(APPOINTMENT_CANCELLATION_REASONS)
+  reasonCode!: typeof APPOINTMENT_CANCELLATION_REASONS[number];
 }

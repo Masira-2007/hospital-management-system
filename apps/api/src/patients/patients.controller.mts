@@ -59,7 +59,7 @@ export class PatientsController {
           } },
         },
       });
-      await transaction.auditEvent.create({
+      await transaction.auditEvent.createMany({
         data: {
           organizationId: tenant.organizationId,
           actorUserId: userId,
@@ -135,7 +135,7 @@ export class PatientsController {
         }),
         transaction.patient.count({ where }),
       ]);
-      await transaction.auditEvent.create({
+      await transaction.auditEvent.createMany({
         data: {
           organizationId: tenant.organizationId,
           actorUserId: userId,
@@ -216,7 +216,7 @@ export class PatientsController {
             },
             select: { id: true, mrn: true, firstName: true, lastName: true, createdAt: true },
           });
-          await transaction.auditEvent.create({ data: {
+          await transaction.auditEvent.createMany({ data: {
             organizationId: tenant.organizationId,
             actorUserId: userId,
             action: "patient.registered",

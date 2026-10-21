@@ -66,7 +66,7 @@ test("parallel hospital submissions for one official email are serialized to one
               return { id: existing.id, status: existing.status };
             },
           },
-          auditEvent: { create: async () => undefined },
+          auditEvent: { createMany: async () => undefined },
         });
       } finally {
         release?.();
@@ -107,7 +107,7 @@ test("application verification consumes a one-time token and rejects its replay"
         findUnique: async () => usable ? application : null,
         updateMany: async () => { if (!usable) return { count: 0 }; usable = false; return { count: 1 }; },
       },
-      auditEvent: { create: async () => { auditCount += 1; } },
+      auditEvent: { createMany: async () => { auditCount += 1; } },
     }),
   };
   const controller = new HospitalApplicationsController(prisma as never, {} as never);
@@ -201,7 +201,7 @@ test("first platform admin bootstrap rejects an invalid email verification code"
       findUnique: async () => challenge,
       updateMany: async () => { failedAttempts += 1; return { count: 1 }; },
     },
-    auditEvent: { create: async () => undefined },
+    auditEvent: { createMany: async () => undefined },
     $transaction: async (operations: unknown[]) => { assert.equal(operations.length, 2); },
   };
   const controller = new PlatformBootstrapController(prisma as never, { isEmailDeliveryConfigured: () => true } as never);
@@ -227,7 +227,7 @@ test("first platform admin is activated by one email code and does not need TOTP
       platformBootstrapToken: { updateMany: async () => ({ count: 1 }) },
       user: { updateMany: async ({ data }: { data: Record<string, unknown> }) => { userUpdate = data; return { count: 1 }; } },
       membership: { updateMany: async () => { membershipActivated = true; return { count: 1 }; } },
-      auditEvent: { create: async () => undefined },
+      auditEvent: { createMany: async () => undefined },
     }),
   };
   const controller = new PlatformBootstrapController(prisma as never, { isEmailDeliveryConfigured: () => true } as never);
@@ -298,7 +298,7 @@ test("hospital suspension is audited and repeated requests are idempotent", asyn
         findUnique: async () => ({ id: "hospital-1", organizationId: "org-1", name: "Example Hospital", status }),
         updateMany: async ({ data }: { data: { status: string } }) => { status = data.status; return { count: 1 }; },
       },
-      auditEvent: { create: async () => { auditCount += 1; } },
+      auditEvent: { createMany: async () => { auditCount += 1; } },
     }),
   };
   const controller = new PlatformController(prisma as never, {} as never);
@@ -315,7 +315,7 @@ test("provisioning hospitals cannot be suspended or reactivated from the platfor
   const prisma = {
     $transaction: async (callback: (transaction: Record<string, unknown>) => Promise<unknown>) => callback({
       hospital: { findUnique: async () => ({ id: "hospital-1", organizationId: "org-1", name: "Example Hospital", status: "PROVISIONING" }) },
-      auditEvent: { create: async () => { auditCount += 1; } },
+      auditEvent: { createMany: async () => { auditCount += 1; } },
     }),
   };
   const controller = new PlatformController(prisma as never, {} as never);
@@ -335,14 +335,14 @@ test("a revoked hospital invitation can be safely reissued with a fresh token an
       updateMany: async (args: Record<string, unknown>) => { updateArgs = args; return { count: 1 }; },
       findUniqueOrThrow: async () => ({ id: "invite-1", intendedEmail: "admin@example.test", organizationId: "org-1", status: "PENDING", expiresAt }),
     },
-    auditEvent: { create: async ({ data }: { data: { action: string } }) => { auditAction = data.action; } },
+    auditEvent: { createMany: async ({ data }: { data: { action: string } }) => { auditAction = data.action; } },
   };
   const prisma = {
     hospitalInvitation: {
       findUnique: async () => ({ id: "invite-1", organizationId: "org-1", status: "REVOKED" }),
       update: async () => undefined,
     },
-    auditEvent: { create: async () => undefined },
+    auditEvent: { createMany: async () => undefined },
     $transaction: async (operation: unknown) => Array.isArray(operation)
       ? Promise.all(operation)
       : (operation as (tx: typeof transaction) => Promise<unknown>)(transaction),
@@ -449,7 +449,7 @@ test("platform account directory is paginated and excludes patient-only and plat
         count: async ({ where }: { where: unknown }) => { countWhere = where; return 1; },
         findMany: async (args: Record<string, unknown>) => { findArgs = args; return [account]; },
       },
-      auditEvent: { create: async ({ data }: { data: unknown }) => { auditData = data; } },
+      auditEvent: { createMany: async ({ data }: { data: unknown }) => { auditData = data; } },
     }),
   };
   const query = Object.assign(new PlatformAccountQueryDto(), { search: " doctor ", status: "ACTIVE" as const, page: 2, pageSize: 10 });
@@ -489,7 +489,7 @@ test("staff suspension revokes active sessions and audits the change transaction
       membership: { findFirst: async () => null },
       session: { updateMany: async (args: { where: unknown; data: unknown }) => { revokeWhere = args.where; revokeData = args.data; return { count: 3 }; } },
       loginVerificationCode: { updateMany: async (args: { where: unknown }) => { loginCodeWhere = args.where; return { count: 2 }; } },
-      auditEvent: { create: async ({ data }: { data: unknown }) => { auditData = data; } },
+      auditEvent: { createMany: async ({ data }: { data: unknown }) => { auditData = data; } },
     }),
   };
   const result = await new PlatformController(prisma as never, {} as never).changeAccountStatus("staff-1", { action: "SUSPEND", reason: "Confirmed security review requires account suspension." }, { authSession: { user: { id: "admin-1" } } } as never);
@@ -534,7 +534,7 @@ test("platform account controls are idempotent and only change active or suspend
       membership: { findFirst: async () => null },
       session: { updateMany: async () => ({ count: 0 }) },
       loginVerificationCode: { updateMany: async () => ({ count: 0 }) },
-      auditEvent: { create: async () => { auditCount += 1; } },
+      auditEvent: { createMany: async () => { auditCount += 1; } },
     }),
   } as never, {} as never);
   const request = { authSession: { user: { id: "admin-1" } } } as never;
@@ -577,7 +577,7 @@ test("platform audit review is paginated, scoped by safe filters, and omits even
       auditEvent: {
         count: async ({ where }: { where: unknown }) => { countWhere = where; return 1; },
         findMany: async (args: Record<string, unknown>) => { findArgs = args; return [event]; },
-        create: async ({ data }: { data: unknown }) => { auditEntry = data; },
+        createMany: async ({ data }: { data: unknown }) => { auditEntry = data; },
       },
     }),
   };
@@ -608,7 +608,7 @@ test("platform audit feed excludes hospital-scoped patient directory trails", as
       auditEvent: {
         count: async () => 0,
         findMany: async (args: Record<string, unknown>) => { findArgs = args; return []; },
-        create: async () => undefined,
+        createMany: async () => undefined,
       },
     }),
   };

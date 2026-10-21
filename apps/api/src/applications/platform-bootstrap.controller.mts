@@ -56,7 +56,7 @@ export class PlatformBootstrapController {
         where: { id: record.userId },
         data: { displayName: body.displayName.trim(), passwordHash, mfaEnabled: false, mfaSecretEncrypted: null, mfaLastUsedCounter: null },
       });
-      await transaction.auditEvent.create({
+      await transaction.auditEvent.createMany({
         data: { organizationId: membership.organizationId, actorUserId: record.userId, action: "platform.bootstrap_setup_started", resourceType: "platform_bootstrap", resourceId: record.id, metadata: { emailVerificationRequired: true } as Prisma.InputJsonObject },
       });
     });
@@ -124,7 +124,7 @@ export class PlatformBootstrapController {
     if (!verifyEmailVerificationCode(body.emailCode, challenge.codeHash)) {
       await this.prisma.$transaction([
         this.prisma.loginVerificationCode.updateMany({ where: { id: challenge.id, usedAt: null, expiresAt: { gt: now }, failedAttempts: { lt: MAX_EMAIL_CODE_ATTEMPTS } }, data: { failedAttempts: { increment: 1 } } }),
-        this.prisma.auditEvent.create({ data: { organizationId: membership.organizationId, actorUserId: record.userId, action: "platform.bootstrap_email_code_failed", resourceType: "platform_bootstrap", resourceId: record.id } }),
+        this.prisma.auditEvent.createMany({ data: { organizationId: membership.organizationId, actorUserId: record.userId, action: "platform.bootstrap_email_code_failed", resourceType: "platform_bootstrap", resourceId: record.id } }),
       ]);
       throw new ForbiddenException("The email verification code is invalid or expired.");
     }
@@ -144,7 +144,7 @@ export class PlatformBootstrapController {
       if (activatedUser.count !== 1) throw invalidSetup();
       const activatedMembership = await transaction.membership.updateMany({ where: { id: membership.id, status: "INVITED", role: "SUPER_ADMIN" }, data: { status: "ACTIVE" } });
       if (activatedMembership.count !== 1) throw invalidSetup();
-      await transaction.auditEvent.create({
+      await transaction.auditEvent.createMany({
         data: { organizationId: membership.organizationId, actorUserId: record.userId, action: "platform.bootstrap_completed", resourceType: "user", resourceId: record.userId, metadata: { emailCodeVerified: true } as Prisma.InputJsonObject },
       });
     });
@@ -166,11 +166,11 @@ export class PlatformBootstrapController {
     });
     try {
       await this.emailDelivery.sendLoginVerificationCode(email, code);
-      await this.prisma.auditEvent.create({ data: { organizationId, actorUserId: userId, action: `${auditPrefix}_email_code_sent`, resourceType: "platform_bootstrap", resourceId: challenge.id } });
+      await this.prisma.auditEvent.createMany({ data: { organizationId, actorUserId: userId, action: `${auditPrefix}_email_code_sent`, resourceType: "platform_bootstrap", resourceId: challenge.id } });
     } catch {
       await this.prisma.$transaction([
         this.prisma.loginVerificationCode.updateMany({ where: { id: challenge.id, usedAt: null }, data: { usedAt: new Date() } }),
-        this.prisma.auditEvent.create({ data: { organizationId, actorUserId: userId, action: `${auditPrefix}_email_code_delivery_failed`, resourceType: "platform_bootstrap", resourceId: challenge.id } }),
+        this.prisma.auditEvent.createMany({ data: { organizationId, actorUserId: userId, action: `${auditPrefix}_email_code_delivery_failed`, resourceType: "platform_bootstrap", resourceId: challenge.id } }),
       ]);
       throw new ServiceUnavailableException("Email verification could not be sent. Try again later.");
     }

@@ -77,7 +77,7 @@ export class HospitalApplicationsController {
           data: { ...data, verificationTokenHash: tokenHash, verificationExpiresAt: new Date(now.getTime() + VERIFICATION_LIFETIME_MS) },
           select: { id: true, status: true },
         });
-        await transaction.auditEvent.create({
+        await transaction.auditEvent.createMany({
           data: {
             action: "hospital.application_verification_resent",
             resourceType: "hospital_application",
@@ -97,7 +97,7 @@ export class HospitalApplicationsController {
         },
         select: { id: true, status: true },
       });
-      await transaction.auditEvent.create({
+      await transaction.auditEvent.createMany({
         data: {
           action: "hospital.application_submitted",
           resourceType: "hospital_application",
@@ -117,7 +117,7 @@ export class HospitalApplicationsController {
             where: { id: submission.application.id, verificationTokenHash: tokenHash },
             data: { verificationTokenHash: null, verificationExpiresAt: null },
           }),
-          this.prisma.auditEvent.create({
+          this.prisma.auditEvent.createMany({
             data: {
               action: "hospital.application_verification_delivery_failed",
               resourceType: "hospital_application",
@@ -161,7 +161,7 @@ export class HospitalApplicationsController {
           data: { status: "PENDING_REVIEW", emailVerifiedAt: now, verificationTokenHash: null, verificationExpiresAt: null },
         });
         if (updated.count !== 1) throw new BadRequestException("This verification link is invalid or expired.");
-        await transaction.auditEvent.create({
+        await transaction.auditEvent.createMany({
           data: { action: "hospital.application_email_verified", resourceType: "hospital_application", resourceId: application.id },
         });
       });

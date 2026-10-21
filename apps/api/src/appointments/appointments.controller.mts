@@ -1,11 +1,11 @@
-import { BadRequestException, ConflictException, Controller, ForbiddenException, Get, Post, Body, Query, Req, UseGuards } from "@nestjs/common";
+import { BadRequestException, ConflictException, Controller, ForbiddenException, Get, NotFoundException, Param, Post, Body, Query, Req, UseGuards } from "@nestjs/common";
 import { ApiCookieAuth, ApiHeader, ApiOperation, ApiTags } from "@nestjs/swagger";
 import type { MembershipRole, Prisma } from "@prisma/client";
 import { PrismaService } from "../database/prisma.service.mjs";
 import { SessionAuthGuard } from "../auth/session-auth.guard.mjs";
 import { TenantMembershipGuard } from "../auth/tenant-membership.guard.mjs";
 import type { RequestLike } from "../auth/auth.types.mjs";
-import { AppointmentListDto, CreateAppointmentDto } from "./appointment.dto.mjs";
+import { AppointmentListDto, CancelAppointmentDto, CreateAppointmentDto } from "./appointment.dto.mjs";
 
 const BOOKABLE_DOCTOR_ROLES: MembershipRole[] = ["DOCTOR", "SPECIALIST_DOCTOR"];
 const MAX_SCHEDULE_RANGE_MS = 31 * 24 * 60 * 60 * 1000;
@@ -61,7 +61,7 @@ export class AppointmentsController {
         }),
         transaction.appointment.count({ where }),
       ]);
-      await transaction.auditEvent.create({ data: {
+      await transaction.auditEvent.createMany({ data: {
         organizationId: tenant.organizationId,
         actorUserId: userId,
         action: "appointment.listed",
@@ -136,7 +136,7 @@ export class AppointmentsController {
           },
           select: { id: true, startsAt: true, durationMinutes: true, status: true, patientId: true, doctorMembershipId: true, createdAt: true },
         });
-        await transaction.auditEvent.create({ data: {
+        await transaction.auditEvent.createMany({ data: {
           organizationId: tenant.organizationId,
           actorUserId: userId,
           action: "appointment.requested",
@@ -150,6 +150,65 @@ export class AppointmentsController {
       if (error instanceof BadRequestException || error instanceof ForbiddenException) throw error;
       if (typeof error === "object" && error !== null && "code" in error && ["P2004", "P2034"].includes(String(error.code))) {
         throw new ConflictException("That clinician already has an appointment during this time. Choose another time.");
+      }
+      throw error;
+    }
+  }
+
+  @Post(":appointmentId/cancel")
+  @ApiHeader({ name: "x-organization-id", required: true, description: "Organization context; checked against active membership." })
+  @ApiHeader({ name: "x-hospital-id", required: true, description: "Hospital context; checked against active membership." })
+  @ApiHeader({ name: "x-branch-id", required: false, description: "Optional branch scope; checked against active membership." })
+  @ApiOperation({ summary: "Cancel a future requested or confirmed appointment in the authorized hospital scope" })
+  async cancel(@Param("appointmentId") appointmentId: string, @Body() body: CancelAppointmentDto, @Req() request: RequestLike) {
+    const tenant = request.tenant!;
+    const userId = request.authSession!.user.id;
+    if (!tenant.hospitalId) throw new ForbiddenException("A hospital context is required for appointments.");
+    await this.requirePermission("appointment.cancel", tenant.memberships.map(({ role }) => role));
+
+    try {
+      return await this.prisma.$transaction(async (transaction) => {
+        await this.setTenantContext(transaction, userId, tenant.organizationId, tenant.hospitalId!, tenant.branchId);
+        const scope: Prisma.AppointmentWhereInput = {
+          id: appointmentId,
+          organizationId: tenant.organizationId,
+          hospitalId: tenant.hospitalId!,
+          ...(tenant.branchId ? { branchId: tenant.branchId } : {}),
+        };
+        const current = await transaction.appointment.findFirst({
+          where: scope,
+          select: { id: true, startsAt: true, status: true },
+        });
+        if (!current) throw new NotFoundException("Appointment not found.");
+        if (current.status === "CANCELLED") return { appointment: { id: current.id, status: current.status }, changed: false };
+
+        const now = new Date();
+        if ((current.status !== "REQUESTED" && current.status !== "CONFIRMED") || current.startsAt <= now) {
+          throw new ConflictException("Only future requested or confirmed appointments can be cancelled.");
+        }
+
+        const updated = await transaction.appointment.updateMany({
+          where: { ...scope, status: current.status, startsAt: { gt: now } },
+          data: { status: "CANCELLED" },
+        });
+        if (updated.count !== 1) throw new ConflictException("Appointment changed while cancellation was in progress. Refresh and try again.");
+
+        await transaction.auditEvent.createMany({
+          data: {
+            organizationId: tenant.organizationId,
+            actorUserId: userId,
+            action: "appointment.cancelled",
+            resourceType: "appointment",
+            resourceId: current.id,
+            metadata: { hospitalId: tenant.hospitalId, branchId: tenant.branchId, reasonCode: body.reasonCode } as Prisma.InputJsonObject,
+          },
+        });
+        return { appointment: { id: current.id, status: "CANCELLED" as const }, changed: true };
+      }, { isolationLevel: "Serializable" });
+    } catch (error) {
+      if (error instanceof BadRequestException || error instanceof ConflictException || error instanceof ForbiddenException || error instanceof NotFoundException) throw error;
+      if (typeof error === "object" && error !== null && "code" in error && String(error.code) === "P2034") {
+        throw new ConflictException("Appointment changed while cancellation was in progress. Refresh and try again.");
       }
       throw error;
     }

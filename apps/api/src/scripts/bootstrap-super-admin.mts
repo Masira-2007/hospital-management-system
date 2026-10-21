@@ -64,13 +64,13 @@ async function main() {
       if (membership) await transaction.membership.update({ where: { id: membership.id }, data: { status: "INVITED", expiresAt: null } });
       else await transaction.membership.create({ data: { userId: user.id, organizationId: organization.id, role: "SUPER_ADMIN", status: "INVITED" } });
       const setup = await transaction.platformBootstrapToken.create({ data: { userId: user.id, tokenHash: hashSessionToken(rawToken), expiresAt } });
-      await transaction.auditEvent.create({ data: { organizationId: organization.id, action: "platform.bootstrap_invitation_created", resourceType: "user", resourceId: user.id, metadata: { tokenExpiresAt: expiresAt.toISOString() } } });
+      await transaction.auditEvent.createMany({ data: { organizationId: organization.id, action: "platform.bootstrap_invitation_created", resourceType: "user", resourceId: user.id, metadata: { tokenExpiresAt: expiresAt.toISOString() } } });
       return { userId: user.id, organizationId: organization.id, tokenId: setup.id };
     });
 
     try {
       await emailDelivery.sendPlatformBootstrap(email, rawToken);
-      await prisma.auditEvent.create({ data: { organizationId: bootstrap.organizationId, action: "platform.bootstrap_invitation_sent", resourceType: "user", resourceId: bootstrap.userId } });
+      await prisma.auditEvent.createMany({ data: { organizationId: bootstrap.organizationId, action: "platform.bootstrap_invitation_sent", resourceType: "user", resourceId: bootstrap.userId } });
       process.stdout.write("Bootstrap invitation sent. The recipient must set a password and verify the setup with a one-time email code within 30 minutes.\n");
     } catch {
       const failedAt = new Date();
@@ -78,7 +78,7 @@ async function main() {
         await transaction.platformBootstrapToken.updateMany({ where: { id: bootstrap.tokenId, usedAt: null }, data: { usedAt: failedAt } });
         await transaction.user.update({ where: { id: bootstrap.userId }, data: { status: "INVITED" } });
         await transaction.membership.updateMany({ where: { userId: bootstrap.userId, organizationId: bootstrap.organizationId, role: "SUPER_ADMIN", status: "INVITED" }, data: { status: "DISABLED" } });
-        await transaction.auditEvent.create({ data: { organizationId: bootstrap.organizationId, action: "platform.bootstrap_invitation_failed", resourceType: "user", resourceId: bootstrap.userId } });
+        await transaction.auditEvent.createMany({ data: { organizationId: bootstrap.organizationId, action: "platform.bootstrap_invitation_failed", resourceType: "user", resourceId: bootstrap.userId } });
       });
       throw new Error("The bootstrap invitation email could not be delivered. No setup link was printed or returned; inspect the email provider and run the bootstrap again with the same email.");
     }

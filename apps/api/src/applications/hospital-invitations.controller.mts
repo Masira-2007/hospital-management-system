@@ -94,7 +94,7 @@ export class HospitalInvitationsController {
       }
 
       await transaction.hospitalInvitation.update({ where: { id: invitation.id }, data: { preparedUserId: user.id } });
-      await transaction.auditEvent.create({
+      await transaction.auditEvent.createMany({
         data: {
           organizationId: invitation.organizationId,
           action: "hospital.invitation_setup_started",
@@ -152,7 +152,7 @@ export class HospitalInvitationsController {
       await transaction.hospital.updateMany({ where: { id: invitation.hospitalId, organizationId: invitation.organizationId, status: "PROVISIONING" }, data: { status: "ACTIVE" } });
       await transaction.branch.updateMany({ where: { hospitalId: invitation.hospitalId, status: "PROVISIONING" }, data: { status: "ACTIVE" } });
       await transaction.hospitalInvitation.update({ where: { id: invitation.id }, data: { status: "ACCEPTED", acceptedAt: now } });
-      await transaction.auditEvent.create({
+      await transaction.auditEvent.createMany({
         data: {
           organizationId: invitation.organizationId,
           actorUserId: invitation.preparedUserId,
@@ -196,7 +196,7 @@ export class HospitalInvitationsController {
       await transaction.hospital.updateMany({ where: { id: hospitalId, organizationId, status: "PROVISIONING" }, data: { status: "ACTIVE" } });
       await transaction.branch.updateMany({ where: { hospitalId, status: "PROVISIONING" }, data: { status: "ACTIVE" } });
       await transaction.hospitalInvitation.update({ where: { id: invitationId }, data: { status: "ACCEPTED", acceptedAt: now, preparedUserId: userId } });
-      await transaction.auditEvent.create({
+      await transaction.auditEvent.createMany({
         data: { organizationId, actorUserId: userId, action: "hospital.invitation_accepted", resourceType: "hospital_invitation", resourceId: invitationId, metadata: { role: "HOSPITAL_ADMIN", existingAccount: true } as Prisma.InputJsonObject },
       });
     });
