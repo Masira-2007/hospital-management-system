@@ -121,6 +121,9 @@ export function VerifyApplicationEmail() {
 
 export function InvitationSetupForm({ platform = false }: { platform?: boolean }) {
   const [token, setToken] = useState("");
+  const [checkingToken, setCheckingToken] = useState(platform);
+  const [bootstrapEmail, setBootstrapEmail] = useState("");
+  const [bootstrapRequestSent, setBootstrapRequestSent] = useState(false);
   const [displayName, setDisplayName] = useState("");
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
@@ -144,7 +147,23 @@ export function InvitationSetupForm({ platform = false }: { platform?: boolean }
     const value = new URLSearchParams(window.location.hash.slice(1)).get("token") ?? "";
     if (/^[a-f0-9]{64}$/i.test(value)) setToken(value);
     window.history.replaceState(null, "", window.location.pathname);
+    setCheckingToken(false);
   }, []);
+
+  async function requestPlatformInvitation(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault(); setError(""); setBusy(true);
+    try {
+      const response = await fetch("/api/v1/platform/bootstrap/request", {
+        method: "POST", headers: { "Content-Type": "application/json" }, credentials: "same-origin",
+        body: JSON.stringify({ email: bootstrapEmail }),
+      });
+      const data = await response.json().catch(() => null) as ApiResult | null;
+      if (!response.ok) throw new Error(response.status === 429 ? "Too many setup requests. Please wait before trying again." : data?.message ?? "The secure setup service is temporarily unavailable.");
+      setBootstrapRequestSent(true);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "The secure setup service could not be reached.");
+    } finally { setBusy(false); }
+  }
 
   async function prepare(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); setError("");
@@ -204,6 +223,18 @@ export function InvitationSetupForm({ platform = false }: { platform?: boolean }
     } catch (reason) { setError(reason instanceof Error ? reason.message : "The secure service could not complete this request."); }
     finally { setBusy(false); }
   }
+
+  if (platform && checkingToken) return <OnboardingFrame kicker="FIRST PLATFORM ADMINISTRATOR" title="Checking secure invitation" description="Checking the one-time setup link."><div className="onboarding-state"><span className="onboarding-spinner"/></div></OnboardingFrame>;
+
+  if (platform && !token) return <OnboardingFrame kicker="FIRST PLATFORM ADMINISTRATOR" title={bootstrapRequestSent ? "Check your inbox" : "Request secure setup"} description={bootstrapRequestSent ? "If this address is eligible for first-administrator setup, an invitation email will arrive shortly. Check your spam folder too." : "Enter the administrator email configured for this deployment. If first-admin setup is still available, we’ll send a one-time setup link."}>
+    {bootstrapRequestSent ? <div className="onboarding-success"><BadgeCheck size={22}/><p>The link expires in 30 minutes. You will choose a new password privately and confirm an email verification code before the account is activated.</p><Link href="/super-admin/login">Return to sign in <ArrowRight size={15}/></Link></div> : <form className="onboarding-form" onSubmit={requestPlatformInvitation}>
+      <label className="onboarding-field"><span>Administrator email address</span><input type="email" autoComplete="email" maxLength={254} value={bootstrapEmail} onChange={(event) => setBootstrapEmail(event.target.value)} required/></label>
+      {error && <p className="onboarding-error" role="alert">{error}</p>}
+      <button className="onboarding-submit" disabled={busy}>{busy ? "Requesting securely…" : "Email secure setup link"}<ArrowRight size={16}/></button>
+      <p className="onboarding-note"><LockKeyhole size={15}/> The account remains inactive until the link, new password, and email verification code are confirmed.</p>
+      <Link className="onboarding-text-button" href="/super-admin/login">Return to Super Admin sign in</Link>
+    </form>}
+  </OnboardingFrame>;
 
   if (success) return <OnboardingFrame kicker="ACCOUNT SECURITY" title={existingMode ? "Invitation accepted" : "Your account is ready"} description={existingMode ? "This account now has authorized access to the hospital workspace." : platform ? "First administrator setup is complete. Sign in with your password and an email verification code." : "Hospital administrator setup is complete. Sign in with your password and authenticator code."}>
     <div className="onboarding-success"><BadgeCheck size={22}/><Link href={existingMode ? "/workspace" : platform ? "/super-admin/login" : "/login"}>{existingMode ? "Open workspace" : "Sign in securely"} <ArrowRight size={15}/></Link></div>

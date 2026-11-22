@@ -7,6 +7,7 @@ import { DocumentBuilder, SwaggerModule } from "@nestjs/swagger";
 import helmet from "helmet";
 import { AppModule } from "./app.module.mjs";
 import { SameSiteCsrfGuard } from "./auth/same-site-csrf.guard.mjs";
+import { PrismaService } from "./database/prisma.service.mjs";
 
 dotenv.config({ path: resolve(process.cwd(), "../../.env") });
 
@@ -51,6 +52,9 @@ function getAllowedOrigins(): string[] {
 async function bootstrap() {
   const allowedOrigins = getAllowedOrigins();
   const app = await NestFactory.create(AppModule);
+  if (process.env.NODE_ENV === "production") {
+    await app.get(PrismaService).verifyRuntimeRole();
+  }
   app.setGlobalPrefix("api/v1");
   app.use(helmet({
     contentSecurityPolicy: process.env.NODE_ENV === "production"

@@ -104,6 +104,11 @@ export class CompletePlatformBootstrapDto {
   emailCode!: string;
 }
 
+export class RequestPlatformBootstrapDto {
+  @IsEmail() @MaxLength(254)
+  email!: string;
+}
+
 export class ResendPlatformBootstrapCodeDto {
   @IsString() @Matches(/^[a-f0-9]{64}$/i)
   token!: string;

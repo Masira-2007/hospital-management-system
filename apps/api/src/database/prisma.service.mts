@@ -2,6 +2,7 @@ import { Injectable, OnModuleDestroy } from "@nestjs/common";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "@prisma/client";
 import { securePostgresConnectionString } from "./connection-string.mjs";
+import { assertRuntimeDatabaseRole, type RuntimeDatabaseRole } from "./runtime-role.mjs";
 
 @Injectable()
 export class PrismaService extends PrismaClient implements OnModuleDestroy {
@@ -20,5 +21,27 @@ export class PrismaService extends PrismaClient implements OnModuleDestroy {
 
   async onModuleDestroy() {
     await this.$disconnect();
+  }
+
+  async verifyRuntimeRole(): Promise<void> {
+    const roles = await this.$queryRaw<Array<{
+      role_name: string;
+      is_superuser: boolean;
+      bypasses_row_level_security: boolean;
+    }>>`
+      SELECT
+        current_user::text AS role_name,
+        COALESCE(role.rolsuper, TRUE) AS is_superuser,
+        COALESCE(role.rolbypassrls, TRUE) AS bypasses_row_level_security
+      FROM pg_catalog.pg_roles AS role
+      WHERE role.rolname = current_user
+    `;
+    const role = roles[0];
+    const verifiedRole: RuntimeDatabaseRole | undefined = role && {
+      roleName: role.role_name,
+      isSuperuser: role.is_superuser,
+      bypassesRowLevelSecurity: role.bypasses_row_level_security,
+    };
+    assertRuntimeDatabaseRole(verifiedRole);
   }
 }

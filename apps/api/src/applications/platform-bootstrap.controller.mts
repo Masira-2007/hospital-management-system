@@ -6,7 +6,7 @@ import type { RequestLike } from "../auth/auth.types.mjs";
 import { PrismaService } from "../database/prisma.service.mjs";
 import { consumeFixedWindowLimit } from "../security/rate-limit.mjs";
 import { createEmailVerificationCode, createSessionToken, hashEmailVerificationCode, hashPassword, hashRateLimitKey, hashSessionToken, verifyEmailVerificationCode } from "../security/security.crypto.mjs";
-import { CompletePlatformBootstrapDto, PrepareInvitationDto, ResendPlatformBootstrapCodeDto } from "./hospital-application.dto.mjs";
+import { CompletePlatformBootstrapDto, PrepareInvitationDto, RequestPlatformBootstrapDto, ResendPlatformBootstrapCodeDto } from "./hospital-application.dto.mjs";
 
 const BOOTSTRAP_LIFETIME_MS = 30 * 60 * 1000;
 const EMAIL_CODE_LIFETIME_MS = 10 * 60 * 1000;
@@ -21,6 +21,101 @@ const emailUnavailable = () => new ServiceUnavailableException({
 @Controller("platform/bootstrap")
 export class PlatformBootstrapController {
   constructor(private readonly prisma: PrismaService, private readonly emailDelivery: EmailDeliveryService) {}
+
+  @Post("request")
+  @HttpCode(202)
+  @ApiOperation({ summary: "Request a first platform administrator invitation for the configured bootstrap email" })
+  async request(@Body() body: RequestPlatformBootstrapDto, @Req() request: RequestLike) {
+    const email = body.email.trim().toLowerCase();
+    const targetEmail = process.env.BOOTSTRAP_ADMIN_EMAIL?.trim().toLowerCase();
+    const emailKey = hashRateLimitKey(`platform-bootstrap-request-email:${email}`);
+    await consumeFixedWindowLimit(this.prisma, [
+      hashRateLimitKey(`platform-bootstrap-request-ip:${request.ip ?? "unknown"}`),
+      emailKey,
+    ], 5, 60);
+
+    // Keep the endpoint non-enumerating: only a deployment-configured address is
+    // eligible, and all other requests receive the same acknowledgement.
+    if (!targetEmail || !isValidBootstrapEmail(targetEmail) || email !== targetEmail) {
+      return { message: "If this address is eligible for first-administrator setup, an invitation email will arrive shortly." };
+    }
+    if (!this.emailDelivery.isConfigured()) throw emailUnavailable();
+
+    const rawToken = createSessionToken();
+    const now = new Date();
+    const expiresAt = new Date(now.getTime() + BOOTSTRAP_LIFETIME_MS);
+    const invitation = await this.prisma.$transaction(async (transaction) => {
+      // Serialize first-admin creation across serverless instances and re-check
+      // the global guard while holding a transaction-scoped database lock.
+      await transaction.$queryRaw`SELECT pg_advisory_xact_lock(hashtext('jr-xpert-hms:first-platform-admin')::bigint)`;
+      const activeAdmin = await transaction.membership.findFirst({
+        where: { role: { in: ["SUPER_ADMIN", "PLATFORM_ADMIN"] }, status: "ACTIVE", hospitalId: null, branchId: null },
+        select: { id: true },
+      });
+      if (activeAdmin) return null;
+
+      const organization = await transaction.organization.findUnique({ where: { slug: "jr-xpert-platform" }, select: { id: true, status: true } });
+      if (organization && organization.status !== "ACTIVE") return null;
+      const existingUser = await transaction.user.findUnique({
+        where: { email },
+        include: { memberships: { select: { organizationId: true, hospitalId: true, branchId: true, role: true, status: true } } },
+      });
+      if (existingUser && (!organization || existingUser.status !== "INVITED" || existingUser.memberships.length === 0 || existingUser.memberships.some((membership) =>
+        membership.organizationId !== organization.id || membership.role !== "SUPER_ADMIN" || membership.status !== "INVITED" || membership.hospitalId !== null || membership.branchId !== null,
+      ))) return null;
+
+      const platform = organization ?? await transaction.organization.create({
+        data: { name: "JR Xpert Platform", slug: "jr-xpert-platform", status: "ACTIVE" },
+        select: { id: true, status: true },
+      });
+      const user = existingUser ?? await transaction.user.create({
+        data: {
+          email,
+          displayName: "Platform Administrator",
+          passwordHash: await hashPassword(createSessionToken()),
+          status: "INVITED",
+          mfaEnabled: false,
+        },
+        select: { id: true },
+      });
+      const membership = await transaction.membership.findFirst({
+        where: { userId: user.id, organizationId: platform.id, role: "SUPER_ADMIN", hospitalId: null, branchId: null, status: "INVITED" },
+        select: { id: true },
+      });
+      if (!membership) await transaction.membership.create({
+        data: { userId: user.id, organizationId: platform.id, role: "SUPER_ADMIN", status: "INVITED" },
+        select: { id: true },
+      });
+
+      const pending = await transaction.platformBootstrapToken.findFirst({ where: { userId: user.id, usedAt: null, expiresAt: { gt: now } }, select: { id: true } });
+      if (pending) return { pending: true as const, userId: user.id, organizationId: platform.id };
+
+      await transaction.platformBootstrapToken.updateMany({ where: { userId: user.id, usedAt: null }, data: { usedAt: now } });
+      const token = await transaction.platformBootstrapToken.create({
+        data: { userId: user.id, tokenHash: hashSessionToken(rawToken), expiresAt },
+        select: { id: true },
+      });
+      await transaction.auditEvent.createMany({
+        data: { organizationId: platform.id, action: "platform.bootstrap_invitation_created", resourceType: "user", resourceId: user.id, metadata: { tokenExpiresAt: expiresAt.toISOString() } as Prisma.InputJsonObject },
+      });
+      return { pending: false as const, userId: user.id, organizationId: platform.id, tokenId: token.id };
+    });
+
+    if (!invitation || invitation.pending) {
+      return { message: "If this address is eligible for first-administrator setup, an invitation email will arrive shortly." };
+    }
+    try {
+      await this.emailDelivery.sendPlatformBootstrap(email, rawToken);
+      await this.prisma.auditEvent.createMany({ data: { organizationId: invitation.organizationId, action: "platform.bootstrap_invitation_sent", resourceType: "user", resourceId: invitation.userId } });
+    } catch {
+      await this.prisma.$transaction([
+        this.prisma.platformBootstrapToken.updateMany({ where: { id: invitation.tokenId, usedAt: null }, data: { usedAt: new Date() } }),
+        this.prisma.auditEvent.createMany({ data: { organizationId: invitation.organizationId, action: "platform.bootstrap_invitation_failed", resourceType: "user", resourceId: invitation.userId } }),
+      ]);
+      throw new ServiceUnavailableException("The secure invitation email could not be delivered. Please try again later.");
+    }
+    return { message: "If this address is eligible for first-administrator setup, an invitation email will arrive shortly." };
+  }
 
   @Post("prepare")
   @HttpCode(200)
@@ -176,6 +271,10 @@ export class PlatformBootstrapController {
     }
     return { challengeToken, emailHint: maskEmail(email), expiresInSeconds: EMAIL_CODE_LIFETIME_MS / 1000 };
   }
+}
+
+function isValidBootstrapEmail(email: string): boolean {
+  return email.length <= 254 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 }
 
 function maskEmail(email: string): string {
