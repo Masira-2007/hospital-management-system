@@ -47,7 +47,7 @@ export class PlatformBootstrapController {
     const invitation = await this.prisma.$transaction(async (transaction) => {
       // Serialize first-admin creation across serverless instances and re-check
       // the global guard while holding a transaction-scoped database lock.
-      await transaction.$queryRaw`SELECT pg_advisory_xact_lock(hashtext('jr-xpert-hms:first-platform-admin')::bigint)`;
+      await transaction.$queryRaw`SELECT pg_advisory_xact_lock(hashtext('jr-xpert-hms:first-platform-admin')::bigint) IS NULL AS lock_acquired`;
       const activeAdmin = await transaction.membership.findFirst({
         where: { role: { in: ["SUPER_ADMIN", "PLATFORM_ADMIN"] }, status: "ACTIVE", hospitalId: null, branchId: null },
         select: { id: true },
