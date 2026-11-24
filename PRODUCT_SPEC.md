@@ -5,7 +5,7 @@
 **Tagline:** Better Care. Smarter Management. Healthier Tomorrow.
 **Reference:** User-supplied JR Xpert HMS collage plus the separately supplied JR Xpert HMS logo. Use the collage as visual direction and the supplied logo image as the brand asset.
 
-This document tracks the user-provided master prompt. It is a scope record, not a claim that listed work is implemented. Status: **not started** unless explicitly marked in the increment table. The pasted prompt received by this workspace stops in section 19.E at “Medicine Expiry and St”; its remaining text and later requirements were not present, so they must be added when provided.
+This document tracks the user-provided master prompt and is a scope record, not a claim that all listed work is implemented. Status: **in progress; not production-ready for real patient data**. The pasted prompt received by this workspace stops in section 19.E at “Medicine Expiry and St”; its remaining text and later requirements were not present, so they must be added when provided.
 
 ## Identity and visual system
 
@@ -57,6 +57,20 @@ This document tracks the user-provided master prompt. It is a scope record, not 
 
 ## Increment history
 
+### 0.18.7 — Security dependency upgrade and bootstrap-flow verification
+
+- Upgraded the isolated web worktree from Next.js 16.4.1 to 16.4.6 and enabled the security-upgrade marker required by the Next.js upgrade workflow. Updated NestJS packages to 12.6.0, which resolves the audited Multer and body-parser advisories; pinned Prisma configuration runtime dependency `effect` to patched 3.22.5.
+- Added a full platform-bootstrap activation flow test. The flow checks that the first Super Admin remains inactive until its one-time email code is verified and rejects replay.
+- Verification on 2026-11-24: 7 web and 98 API tests pass; Prisma schema validation passes with non-secret placeholder URLs; the full web and API production build passes on Next.js 16.4.6; `npm audit --workspaces --include-workspace-root --omit=dev --audit-level=moderate` reports 0 vulnerabilities; `npm ls --all --omit=optional` succeeds. The production build was generated in a separate output directory and its generated tsconfig edits were removed.
+- This change is in the isolated security worktree only and has not been deployed; production remains on commit `074fed9` until the branch is published, merged, and deployed. First-admin activation and real inbox delivery remain unverified. Do not use real patient data.
+
+### 0.18.6 — First administrator invitation and activation verification
+
+- Added the public, non-enumerating first-platform-admin invitation request, limited to the protected `BOOTSTRAP_ADMIN_EMAIL` value, with rate limits, transaction-scoped serialization, single-use hash-only links, audit events and no password in the request flow. Activation requires the recipient to choose a password and verify a one-time email code.
+- Fixed the production PostgreSQL advisory-lock query to return a typed boolean rather than the unsupported `void` result, preventing Prisma response decoding failures.
+- Added a test for the complete activation boundary: the account remains invited after password setup and an incorrect code, becomes active only after a valid code, and rejects token replay.
+- Verification on 2026-11-22: 7 web and 98 API unit tests pass; Prisma schema validation and the API production build pass. The web production build compiles and type-checks, then Next.js 16.4.1 stops with `SecurityFatalError` because the installed Next.js version has a known security vulnerability. `npm audit` could not reach `registry.npmjs.org` from this environment (`ENOTFOUND`). The production deployment at `hms.jrxpert.in` (commit `074fed9`, deployment `dpl_7oXxsuUbCNGwtvw4X9cvzDrKs55C`) is Ready; `/super-admin/login` returns 200 and `/api/v1/health/ready` returns `ready`. Neon confirms the configured first administrator still has `INVITED` user/membership status and an unexpired setup token. The email provider accepted the invite request, but inbox delivery and authenticated login remain unverified. A 30-minute Vercel error/fatal log query returned no records; the one-hour query exceeded the current plan's retention window. Do not use real patient data.
+
 ### 0.18.5 — Appointment rescheduling and verified remote PostgreSQL TLS
 
 - Added a future-appointment reschedule API restricted to requested/confirmed appointments, active tenant-scoped membership, explicit `appointment.reschedule` permission and categorical audit reasons. Conditional updates prevent concurrent edits from silently overwriting each other; the database overlap constraint rejects clinician conflicts.
@@ -76,11 +90,11 @@ This document tracks the user-provided master prompt. It is a scope record, not 
 - Moved opportunistic stale-key pruning into the shared authentication limiter so login, password recovery, hospital onboarding, invitations, and platform bootstrap all receive the same retention cleanup. Pruning runs periodically against the indexed `updatedAt` column; rate-limit upserts remain fail-closed if the database operation fails.
 - Added a test for the bounded stale-record cleanup query. Verification: 5 web and 74 API unit tests pass; API production build passes. The Next.js build and live tenant-isolation test were not rerun for this API-only change; local PostgreSQL/Docker remains unavailable.
 
-### Current operational status — 2026-10-21
+### Current operational status — 2026-11-22
 
-- Public production checks on 2026-10-21 confirm `/api/v1/health/ready` reports `ready`, `/login`, `/super-admin/login`, and `/forgot-password` render successfully, and recent Vercel runtime logs show successful page responses with zero warning/error/fatal entries. The latest deployment on `main` is Ready and `hms.jrxpert.in` is assigned to production.
-- Resend DNS for `hms.jrxpert.in` is verified. The earlier exposed key was revoked; a fresh sending-only key and `AUTH_EMAIL_FROM=JR Xpert <no-reply@hms.jrxpert.in>` are configured in Vercel Production. A reserved `.invalid` recovery probe returns the generic confirmation, confirming the previous setup error is gone. Real delivery, email-code sign-in, a recovery completion, and the signed-in dashboard have not yet been verified.
-- GitHub Actions run [39465044781](https://github.com/Masira-2007/hospital-management-system/actions/runs/39465044781) passed the two-hospital SQL isolation test against synthetic data (1 passed, 0 failed, 0 skipped). Authenticated login/dashboard browser flow, actual email delivery, first-admin bootstrap, backup restoration and independent security review remain outstanding. Do not use real patient records.
+- Production checks on 2026-11-22 confirm `/api/v1/health/ready` returns HTTP 200 with `ready`, `/super-admin/login` renders successfully, and the Ready `main` deployment is assigned to `hms.jrxpert.in`.
+- Resend DNS and sending configuration are in place. The first-admin request was accepted by the email provider and created an invited Neon account with a pending, unexpired single-use setup token. The recipient still needs to use the email link, choose a password, and verify the emailed code. Email inbox delivery, authenticated email-code login, and a signed-in dashboard session remain unverified.
+- GitHub Actions run [39633529237](https://github.com/Masira-2007/hospital-management-system/actions/runs/39633529237) passed the two-hospital SQL isolation test against synthetic data. A 30-minute Vercel error/fatal log query returned no records; the one-hour query exceeded the current plan's retention window. Backup restoration and independent security review remain outstanding. Do not use real patient records.
 
 ### 0.18.1 — Tenant-test setup diagnostics
 

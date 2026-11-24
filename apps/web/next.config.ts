@@ -3,8 +3,11 @@ import type { NextConfig } from "next";
 const nextConfig: NextConfig = {
   poweredByHeader: false,
   distDir: process.env.NEXT_DIST_DIR ?? ".next",
-  // Keep local verification builds reliable in the synchronized Windows workspace.
-  ...(process.env.NEXT_DIST_DIR ? { experimental: { cpus: 1 } } : {}),
+  experimental: {
+    agentUpgrade: "security",
+    // Keep local verification builds reliable in the synchronized Windows workspace.
+    ...(process.env.NEXT_DIST_DIR ? { cpus: 1 } : {}),
+  },
   async headers() {
     return [{
       source: "/:path*",
